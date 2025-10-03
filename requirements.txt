@@ -1,6 +1,8 @@
 streamlit
 pandas
 plotly
+wordcloud
+scikit-learn
 folium
 streamlit-folium
 pyproj

@@ -4,6 +4,7 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.preprocessing import MinMaxScaler
+import calendar, re   # ✅ perbaikan: calender -> calendar
 
 # ===============================
 # LOGO + HEADER
@@ -51,19 +52,75 @@ if "data" not in st.session_state:
             data_dict[sheet] = pd.DataFrame()
     st.session_state["data"] = data_dict
 
+# ✅ perbaikan case-sensitive
 df = st.session_state["data"].get("Ketidaksesuaian", pd.DataFrame())
 df_online = st.session_state["data"].get("Survei_Online", pd.DataFrame())
 df_offline = st.session_state["data"].get("Survei_Offline", pd.DataFrame())
 df_survey = pd.concat([df_online, df_offline], ignore_index=True)
 
-if df.empty:
+# ===============================
+# FILTER SIDEBAR
+# ===============================
+st.sidebar.subheader("Filter Ketidaksesuaian")
+
+if not df.empty:
+    # Pastikan kolom tanggal ada
+    if "tanggallapor" in df.columns:
+        df["tanggallapor"] = pd.to_datetime(df["tanggallapor"], errors="coerce")
+        df["tahun"] = df["tanggallapor"].dt.year
+        df["bulan"] = df["tanggallapor"].dt.month
+
+    # Filter perusahaan
+    perusahaan_list = sorted(df["perusahaan"].dropna().unique()) if "perusahaan" in df.columns else []
+    perusahaan_sel = st.sidebar.multiselect("Pilih Perusahaan", perusahaan_list, default=perusahaan_list)
+
+    # Filter site
+    site_list = sorted(df["site"].dropna().unique()) if "site" in df.columns else []
+    site_sel = st.sidebar.multiselect("Pilih Site", site_list, default=site_list)
+
+    # mapping bulan
+    bulan_map = {
+        "Januari": 1, "Februari": 2, "Maret": 3, "April": 4, "Mei": 5, "Juni": 6,
+        "Juli": 7, "Agustus": 8, "September": 9, "Oktober": 10, "November": 11, "Desember": 12
+    }
+
+    # tahun
+    if "tahun" in df.columns:
+        tahun_list = sorted(df["tahun"].dropna().unique())
+        tahun_sel = st.sidebar.multiselect("Pilih Tahun", tahun_list, default=tahun_list)
+    else:
+        tahun_sel = []
+
+    # bulan
+    if "bulan" in df.columns:
+        bulan_list = list(bulan_map.keys())
+        bulan_sel = st.sidebar.multiselect("Pilih Bulan", bulan_list, default=bulan_list)
+        bulan_sel_num = [bulan_map[b] for b in bulan_sel]  # ubah ke angka 1–12
+    else:
+        bulan_sel, bulan_sel_num = [], []
+
+    # Terapkan filter
+    if perusahaan_sel:
+        df = df[df["perusahaan"].isin(perusahaan_sel)]
+    if site_sel:
+        df = df[df["site"].isin(site_sel)]
+    if tahun_sel:
+        df = df[df["tahun"].isin(tahun_sel)]
+    if bulan_sel_num:
+        df = df[df["bulan"].isin(bulan_sel_num)]
+
+    if df.empty:
+        st.warning("⚠️ Data ketidaksesuaian kosong setelah filter. Silakan ubah filter.")
+        st.stop()
+else:
     st.warning("❌ Data `Ketidaksesuaian` tidak ditemukan.")
     st.stop()
 
 # ===============================
 # NORMALISASI KOLOM KETIDAKSESUAIAN
 # ===============================
-df["status_temuan"] = df["status_temuan"].astype(str).str.strip().str.title()
+if "status_temuan" in df.columns:
+    df["status_temuan"] = df["status_temuan"].astype(str).str.strip().str.title()
 
 if "kategori_subketidaksesuaian" in df.columns:
     df["kategori_subketidaksesuaian"] = (
@@ -78,12 +135,12 @@ if "kategori_subketidaksesuaian" in df.columns:
 # METRICS
 # ===============================
 total_reports = len(df)
-df_valid = df[df["status_temuan"] == "Valid"].copy()
+df_valid = df[df["status_temuan"] == "Valid"].copy() if "status_temuan" in df.columns else df.copy()
 total_valid = len(df_valid)
 pct_valid = (total_valid / total_reports * 100) if total_reports > 0 else 0
 
-count_perilaku = (df_valid["kategori_subketidaksesuaian"] == "Perilaku").sum()
-count_nonperilaku = (df_valid["kategori_subketidaksesuaian"] == "Non Perilaku").sum()
+count_perilaku = (df_valid["kategori_subketidaksesuaian"] == "Perilaku").sum() if "kategori_subketidaksesuaian" in df_valid.columns else 0
+count_nonperilaku = (df_valid["kategori_subketidaksesuaian"] == "Non Perilaku").sum() if "kategori_subketidaksesuaian" in df_valid.columns else 0
 
 pct_perilaku = (count_perilaku / total_valid * 100) if total_valid > 0 else 0
 pct_nonperilaku = (count_nonperilaku / total_valid * 100) if total_valid > 0 else 0
@@ -105,7 +162,6 @@ st.markdown("---")
 # ===============================
 st.subheader("📈 Tren: Perilaku vs Non-Perilaku (Valid)")
 if "tanggallapor" in df_valid.columns:
-    df_valid["tanggallapor"] = pd.to_datetime(df_valid["tanggallapor"], errors="coerce")
     df_valid["period_month"] = df_valid["tanggallapor"].dt.to_period("M")
     trend = df_valid.groupby(["period_month", "kategori_subketidaksesuaian"]).size().reset_index(name="count")
     if not trend.empty:
@@ -178,6 +234,16 @@ else:
 st.markdown("---")
 
 # ===============================
+# PERSIAPAN DATA SURVEI
+# ===============================
+col_site = "site___lokasi_kerja"
+col_corp = "perusahaan_area_kerja_tambang"
+col_q2 = "2._seberapa_optimal_program_gbst_berjalan_selama_ini_di_perusahaan_anda?"
+
+if not df_survey.empty and col_q2 in df_survey.columns:
+    df_survey[col_q2] = pd.to_numeric(df_survey[col_q2], errors="coerce")
+    df_survey = df_survey.dropna(subset=[col_q2])
+
 # ===============================
 # ANALISIS KORELASI FEEDBACK Q2
 # ===============================
@@ -222,20 +288,6 @@ if not df_survey.empty and not df.empty:
 
         # Baseline rata-rata feedback
         baseline_opt = df_corr["feedback_q2"].mean()
-
-
-        # FILTER
-        perusahaan_opts = ["Semua"] + sorted(df_corr["perusahaan"].unique().tolist())
-        pilih_perusahaan = st.selectbox("Pilih Perusahaan", perusahaan_opts)
-
-        site_opts = ["Semua"] + sorted(df_corr["site"].unique().tolist())
-        pilih_site = st.selectbox("Pilih Site", site_opts)
-
-        df_filtered = df_corr.copy()
-        if pilih_perusahaan != "Semua":
-            df_filtered = df_filtered[df_filtered["perusahaan"]==pilih_perusahaan]
-        if pilih_site != "Semua":
-            df_filtered = df_filtered[df_filtered["site"]==pilih_site]
 
         # Company-Site gabungan
         df_corr["company_site"] = df_corr["perusahaan"] + " - " + df_corr["site"]
