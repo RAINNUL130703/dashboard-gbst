@@ -112,6 +112,226 @@ st.session_state["data"] = {
     "Koordinat_UTM": df_koordinat
 }
 
+
+# =============================
+# FILTER LOKAL (HANYA PAGE INI)
+# =============================
+import calendar
+import re
+st.sidebar.subheader("Filter Data")
+site_list = sorted(df_timbulan["site"].dropna().unique()) if "site" in df_timbulan.columns else []
+site_sel = st.sidebar.multiselect("Pilih Site", site_list, default=site_list[:4] if site_list else [])
+
+perusahaan_list = sorted(df_timbulan["perusahaan"].dropna().unique()) if "perusahaan" in df_timbulan.columns else []
+perusahaan_sel = st.sidebar.multiselect("Pilih Perusahaan", perusahaan_list, default=perusahaan_list[:6] if perusahaan_list else [])
+
+
+# 1. Deteksi kolom bulan-tahun otomatis
+pattern = r"^(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)_\d{4}$"
+bulan_tahun_cols = [col for col in df_program.columns if re.match(pattern, str(col))]
+
+# 2. Reshape wide → long
+df_prog_long = df_program.melt(
+    id_vars=[col for col in df_program.columns if col not in bulan_tahun_cols],
+    value_vars=bulan_tahun_cols,
+    var_name="Bulan-Tahun",
+    value_name="Value"
+)
+#df_prog_long["tahun"] = df_prog_long["Bulan-Tahun"].apply(lambda x: int(x.split(" ")[1]))
+#df_prog_long["bulan"] = df_prog_long["Bulan-Tahun"].apply(lambda x: x.split(" ")[0])
+
+df_prog_long["tahun"] = df_prog_long["Bulan-Tahun"].apply(lambda x: int(x.split("_")[1]))
+df_prog_long["bulan"] = df_prog_long["Bulan-Tahun"].apply(lambda x: x.split("_")[0].capitalize())
+
+
+# 3. Mapping nama bulan ke angka
+bulan_map = {
+   "Januari": 1, "Februari": 2, "Maret": 3, "April": 4,
+  "Mei": 5, "Juni": 6, "Juli": 7, "Agustus": 8,
+  "September": 9, "Oktober": 10, "November": 11, "Desember": 12
+}
+
+
+# 4. Bisa bikin kolom periode datetime (buat filter/plot)
+import datetime
+
+#df_prog_long["Periode"] = df_prog_long.apply(
+#    lambda row: datetime.datetime(row["Tahun"], bulan_map[row["Bulan"]], 1),
+#    axis=1
+#)
+
+#df_prog_long["periode"] = pd.to_datetime(
+#    df_prog_long["tahun"].astype(int).astype(str) + "-" +
+#    df_prog_long["bulan"].map(bulan_map).astype(str) + "-01"
+#)
+
+df_prog_long["periode"] = pd.to_datetime(
+    df_prog_long["tahun"].astype(str) + "-" +
+    df_prog_long["bulan"].map(bulan_map).astype(str) + "-01"
+)
+
+# ======================
+# Filter Bulan & Tahun
+# ======================
+#df_ketidaksesuaian = all_df.get("Ketidaksesuaian", pd.DataFrame())
+df_ketidaksesuaian["tanggallapor"] = pd.to_datetime(df_ketidaksesuaian["tanggallapor"], dayfirst=True, errors="coerce")
+df_ketidaksesuaian["tahun"] = df_ketidaksesuaian["tanggallapor"].dt.year
+df_ketidaksesuaian["bulan"] = df_ketidaksesuaian["tanggallapor"].dt.month
+# Buat filter selectbox
+# Pastikan pakai df_ketidaksesuaian yang sudah punya kolom Tahun & Bulan
+tahun_tersedia = sorted(df_prog_long["tahun"].dropna().astype(int).unique())
+#bulan_tersedia = [b for b in calendar.month_name[1:]]  # ['Januari', ..., 'Desember']
+bulan_tersedia = list(bulan_map.keys())  
+
+
+    #tahun_pilihan = st.selectbox("Pilih Tahun:", tahun_tersedia, index=len(tahun_tersedia)-1)
+tahun_pilihan = st.sidebar.multiselect("Pilih Tahun:", tahun_tersedia, default=tahun_tersedia)
+
+bulan_pilihan = st.sidebar.multiselect("Pilih Bulan:", bulan_tersedia, default=bulan_tersedia)
+
+# Filter dataframe sesuai pilihan user
+# Convert nama bulan ke angka untuk filter Ketidaksesuaian
+bulan_pilihan_num = [bulan_map[b] for b in bulan_pilihan]
+# =============================
+# Apply Filter
+# =============================
+# Apply filter ke df_program
+df_prog_filtered = df_prog_long[
+    (df_prog_long["tahun"].isin(tahun_pilihan)) &
+    (df_prog_long["bulan"].isin(bulan_pilihan))].sort_values(by=["tahun","periode"])
+total_program_filtered = df_prog_filtered["Value"].sum()
+
+# Apply filter ke df_ketidaksesuaian
+df_ketidaksesuaian["tanggallapor"] = pd.to_datetime(df_ketidaksesuaian["tanggallapor"], dayfirst=True, errors="coerce")
+df_ketidaksesuaian["tahun"] = df_ketidaksesuaian["tanggallapor"].dt.year
+df_ketidaksesuaian["bulan"] = df_ketidaksesuaian["tanggallapor"].dt.month
+
+df_ket_filtered = df_ketidaksesuaian[
+    (df_ketidaksesuaian["tahun"].isin(tahun_pilihan)) &
+    (df_ketidaksesuaian["bulan"].isin([bulan_map[b]for b in bulan_pilihan]))&
+    (df_ketidaksesuaian["status_temuan"]=="Valid")
+].sort_values(by=["tahun","bulan"])
+
+# Filter Timbulan
+df_timbulan_filtered = df_timbulan.copy()
+if site_sel:
+    df_timbulan_filtered = df_timbulan_filtered[df_timbulan_filtered["site"].isin(site_sel)]
+if perusahaan_sel:
+    df_timbulan_filtered = df_timbulan_filtered[df_timbulan_filtered["perusahaan"].isin(perusahaan_sel)]
+total_timbulan = df_timbulan_filtered["timbulan"].sum()
+
+df_timbulan_sum = df_timbulan_filtered.groupby(["perusahaan","site"])["timbulan"].sum().reset_index()
+total_timbulan = df_timbulan_sum["timbulan"].sum()
+total_program = df_prog_filtered["Value"].sum()
+# =============================
+# Info Jumlah Hari
+# =============================
+import calendar
+
+# Hitung total hari dari semua kombinasi bulan & tahun yang dipilih
+days_period = 0
+for y in tahun_pilihan:
+    for b in bulan_pilihan:
+        month_num = bulan_map[b]
+        days_period += calendar.monthrange(y, month_num)[1]
+
+st.info(f"📅 Total jumlah hari periode filter: **{days_period} hari**")
+# Apply filter lokal
+#df_filtered = dt_timbulan.copy()
+#if site_sel:
+   # df_filtered= df_filtered[df_filtered["Site"].isin(site_sel)]
+#if perusahaan_sel:
+ #   df_filtered = df_filtered[df_filtered["Perusahaan"].isin(perusahaan_sel)]
+# ==============================
+# Fungsi filter global
+# ==============================
+def apply_site_perusahaan_filter(df, site_col="site", perusahaan_col="perusahaan"):
+    df_filtered = df.copy()
+    if site_sel and site_col in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered[site_col].isin(site_sel)]
+    if perusahaan_sel and perusahaan_col in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered[perusahaan_col].isin(perusahaan_sel)]
+    return df_filtered
+
+# ==============================
+# FILTER TAHUN & BULAN untuk Program
+# ==============================
+def apply_program_filter(df_prog_long, tahun_pilihan, bulan_pilihan):
+    bulan_map = {
+       "Januari": 1, "Februari": 2, "Maret": 3, "April": 4,
+       "Mei": 5, "Juni": 6, "Juli": 7, "Agustus": 8,
+       "September": 9, "Oktober": 10, "November": 11, "Desember": 12
+    }
+    bulan_pilihan_num = [bulan_map[b] for b in bulan_pilihan]
+    
+    df_filtered = df_prog_long[
+        (df_prog_long["tahun"].isin(tahun_pilihan)) &
+        (df_prog_long["bulan"].map(bulan_map).isin(bulan_pilihan_num))
+    ]
+    
+    # Filter site & perusahaan juga
+    df_filtered = apply_site_perusahaan_filter(df_filtered)
+    
+    return df_filtered
+
+# ==============================
+# FILTER TAHUN & BULAN untuk Ketidaksesuaian
+# ==============================
+def apply_ketidaksesuaian_filter(df_ketidaksesuaian, tahun_pilihan, bulan_pilihan):
+    bulan_map = {
+       "Januari": 1, "Februari": 2, "Maret": 3, "April": 4,
+       "Mei": 5, "Juni": 6, "Juli": 7, "Agustus": 8,
+       "September": 9, "Oktober": 10, "November": 11, "Desember": 12
+    }
+    bulan_pilihan_num = [bulan_map[b] for b in bulan_pilihan]
+
+    # Pastikan kolom tanggallapor datetime
+    df_ketidaksesuaian["tanggallapor"] = pd.to_datetime(df_ketidaksesuaian["tanggallapor"], dayfirst=True, errors="coerce")
+    df_ketidaksesuaian["tahun"] = df_ketidaksesuaian["tanggallapor"].dt.year
+    df_ketidaksesuaian["bulan"] = df_ketidaksesuaian["tanggallapor"].dt.month
+
+    df_filtered = df_ketidaksesuaian[
+        (df_ketidaksesuaian["tahun"].isin(tahun_pilihan)) &
+        (df_ketidaksesuaian["bulan"].isin(bulan_pilihan_num)) &
+        (df_ketidaksesuaian["status_temuan"] == "Valid")
+    ]
+    
+    # Filter site & perusahaan juga
+    df_filtered = apply_site_perusahaan_filter(df_filtered)
+    
+    return df_filtered
+
+# ==============================
+# Apply ke semua dataframe
+# ==============================
+df_timbulan_filtered = apply_site_perusahaan_filter(df_timbulan)
+df_prog_filtered = apply_program_filter(df_prog_long, tahun_pilihan, bulan_pilihan)
+df_ket_filtered = apply_ketidaksesuaian_filter(df_ketidaksesuaian, tahun_pilihan, bulan_pilihan)
+df_online_filtered = apply_site_perusahaan_filter(df_online)
+df_offline_filtered = apply_site_perusahaan_filter(df_offline)
+
+df_cctv_filtered = apply_site_perusahaan_filter(df_cctv)
+df_koordinat_filtered = apply_site_perusahaan_filter(df_koordinat)
+
+# ==============================
+# Hitung total setelah filter
+# ==============================
+total_timbulan = df_timbulan_filtered["timbulan"].sum() if "timbulan" in df_timbulan_filtered.columns else 0
+total_program = df_prog_filtered["Value"].sum() if "Value" in df_prog_filtered.columns else 0
+
+#=============================================================================================================
+
+
+st.markdown(
+    """
+    <h1 style="font-size:24px; color:#000000; font-weight:bold; margin-bottom:0.5px;">
+    📈Dashboard Gerakan Buang Sampah terpilah (GBST)
+    </h1>
+    """,
+    unsafe_allow_html=True
+)
+
+
 # ===============================
 # DYNAMIC DAYS PERIOD
 # ===============================
