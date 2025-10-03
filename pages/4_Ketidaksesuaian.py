@@ -78,26 +78,20 @@ if not df.empty:
     site_list = sorted(df["site"].dropna().unique()) if "site" in df.columns else []
     site_sel = st.sidebar.multiselect("Pilih Site", site_list, default=site_list)
 
-    # mapping bulan
+    # Mapping bulan
     bulan_map = {
         "Januari": 1, "Februari": 2, "Maret": 3, "April": 4, "Mei": 5, "Juni": 6,
         "Juli": 7, "Agustus": 8, "September": 9, "Oktober": 10, "November": 11, "Desember": 12
     }
 
-    # tahun
-    if "tahun" in df.columns:
-        tahun_list = sorted(df["tahun"].dropna().unique())
-        tahun_sel = st.sidebar.multiselect("Pilih Tahun", tahun_list, default=tahun_list)
-    else:
-        tahun_sel = []
+    # Filter tahun
+    tahun_list = sorted(df["tahun"].dropna().unique()) if "tahun" in df.columns else []
+    tahun_sel = st.sidebar.multiselect("Pilih Tahun", tahun_list, default=tahun_list)
 
-    # bulan
-    if "bulan" in df.columns:
-        bulan_list = list(bulan_map.keys())
-        bulan_sel = st.sidebar.multiselect("Pilih Bulan", bulan_list, default=bulan_list)
-        bulan_sel_num = [bulan_map[b] for b in bulan_sel]  # ubah ke angka 1–12
-    else:
-        bulan_sel, bulan_sel_num = [], []
+    # Filter bulan
+    bulan_list = list(bulan_map.keys())
+    bulan_sel = st.sidebar.multiselect("Pilih Bulan", bulan_list, default=bulan_list)
+    bulan_sel_num = [bulan_map[b] for b in bulan_sel] if bulan_sel else []
 
     # Terapkan filter
     if perusahaan_sel:
@@ -109,6 +103,7 @@ if not df.empty:
     if bulan_sel_num:
         df = df[df["bulan"].isin(bulan_sel_num)]
 
+    # Cek data kosong
     if df.empty:
         st.warning("⚠️ Data ketidaksesuaian kosong setelah filter. Silakan ubah filter.")
         st.stop()
