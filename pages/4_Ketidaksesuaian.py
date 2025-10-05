@@ -78,20 +78,26 @@ if not df.empty:
     site_list = sorted(df["site"].dropna().unique()) if "site" in df.columns else []
     site_sel = st.sidebar.multiselect("Pilih Site", site_list, default=site_list)
 
-    # Mapping bulan
+    # mapping bulan
     bulan_map = {
         "Januari": 1, "Februari": 2, "Maret": 3, "April": 4, "Mei": 5, "Juni": 6,
         "Juli": 7, "Agustus": 8, "September": 9, "Oktober": 10, "November": 11, "Desember": 12
     }
 
-    # Filter tahun
-    tahun_list = sorted(df["tahun"].dropna().unique()) if "tahun" in df.columns else []
-    tahun_sel = st.sidebar.multiselect("Pilih Tahun", tahun_list, default=tahun_list)
+    # tahun
+    if "tahun" in df.columns:
+        tahun_list = sorted(df["tahun"].dropna().unique())
+        tahun_sel = st.sidebar.multiselect("Pilih Tahun", tahun_list, default=tahun_list)
+    else:
+        tahun_sel = []
 
-    # Filter bulan
-    bulan_list = list(bulan_map.keys())
-    bulan_sel = st.sidebar.multiselect("Pilih Bulan", bulan_list, default=bulan_list)
-    bulan_sel_num = [bulan_map[b] for b in bulan_sel] if bulan_sel else []
+    # bulan
+    if "bulan" in df.columns:
+        bulan_list = list(bulan_map.keys())
+        bulan_sel = st.sidebar.multiselect("Pilih Bulan", bulan_list, default=bulan_list)
+        bulan_sel_num = [bulan_map[b] for b in bulan_sel]  # ubah ke angka 1–12
+    else:
+        bulan_sel, bulan_sel_num = [], []
 
     # Terapkan filter
     if perusahaan_sel:
@@ -103,7 +109,6 @@ if not df.empty:
     if bulan_sel_num:
         df = df[df["bulan"].isin(bulan_sel_num)]
 
-    # Cek data kosong
     if df.empty:
         st.warning("⚠️ Data ketidaksesuaian kosong setelah filter. Silakan ubah filter.")
         st.stop()
@@ -327,6 +332,275 @@ else:
     st.warning("❌ Data survei atau ketidaksesuaian kosong.")
 
 st.markdown("---")
+
+
+# ===============================
+# ANALISIS KORELASI FEEDBACK Q2 - FRAUD
+# ===============================
+st.header("📉 Analisis Korelasi (FRAUD): Feedback Q2 vs Ketidaksesuaian")
+
+col_site = "site___lokasi_kerja"
+col_corp = "perusahaan_area_kerja_tambang"
+col_q2 = "2._seberapa_optimal_program_gbst_berjalan_selama_ini_di_perusahaan_anda?"
+
+if not df_survey.empty and not df.empty:
+    if col_site in df_survey.columns and col_corp in df_survey.columns and col_q2 in df_survey.columns:
+        # konversi feedback ke numeric
+        df_survey[col_q2] = pd.to_numeric(df_survey[col_q2], errors="coerce")
+
+        # hitung rata-rata feedback per perusahaan-site
+        df_feedback = (
+            df_survey.groupby([col_corp, col_site])[col_q2]
+            .mean().reset_index()
+            .rename(columns={col_corp:"perusahaan", col_site:"site", col_q2:"feedback_q2"})
+        )
+
+        # filter hanya fraud
+        df_fraud = df[df["status_temuan"] == "Fraud"].copy()
+
+        # jumlah fraud
+        df_count = df_fraud.groupby(["perusahaan","site"]).size().reset_index(name="jumlah_ketidaksesuaian")
+
+        # perilaku & non-perilaku
+        perilaku_count = df_fraud[df_fraud["kategori_subketidaksesuaian"]=="Perilaku"].groupby(
+            ["perusahaan","site"]).size().reset_index(name="jumlah_perilaku")
+        nonperilaku_count = df_fraud[df_fraud["kategori_subketidaksesuaian"]=="Non Perilaku"].groupby(
+            ["perusahaan","site"]).size().reset_index(name="jumlah_nonperilaku")
+
+        # merge semua
+        df_corr = pd.merge(df_feedback, df_count, on=["perusahaan","site"], how="left")
+        df_corr = pd.merge(df_corr, perilaku_count, on=["perusahaan","site"], how="left")
+        df_corr = pd.merge(df_corr, nonperilaku_count, on=["perusahaan","site"], how="left")
+        df_corr = df_corr.fillna(0)
+
+        # normalisasi skala 0-5
+        scaler = MinMaxScaler(feature_range=(0,5))
+        df_corr[["ketidaksesuaian_scaled","perilaku_scaled","nonperilaku_scaled"]] = scaler.fit_transform(
+            df_corr[["jumlah_ketidaksesuaian","jumlah_perilaku","jumlah_nonperilaku"]])
+
+        # korelasi
+        corr_val = df_corr["feedback_q2"].corr(df_corr["jumlah_ketidaksesuaian"])
+
+        # baseline rata-rata feedback
+        baseline_opt = df_corr["feedback_q2"].mean()
+
+        # company-site gabungan
+        df_corr["company_site"] = df_corr["perusahaan"] + " - " + df_corr["site"]
+
+        # ============== VISUALISASI ==============
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df_corr["company_site"], y=df_corr["feedback_q2"],
+                                 mode="lines+markers", name="Feedback Q2 (1-5)", line=dict(color="blue")))
+        fig.add_trace(go.Scatter(x=df_corr["company_site"], y=df_corr["ketidaksesuaian_scaled"],
+                                 mode="lines+markers", name="Fraud (scaled 0-5)", line=dict(color="red")))
+        fig.add_trace(go.Scatter(x=df_corr["company_site"], y=df_corr["perilaku_scaled"],
+                                 mode="lines+markers", name="Fraud Perilaku (scaled 0-5)", line=dict(color="orange", dash="dot")))
+        fig.add_trace(go.Scatter(x=df_corr["company_site"], y=df_corr["nonperilaku_scaled"],
+                                 mode="lines+markers", name="Fraud Non-Perilaku (scaled 0-5)", line=dict(color="green", dash="dot")))
+
+        # baseline garis rata-rata feedback
+        fig.add_hline(y=baseline_opt, line_dash="dot", line_color="green",
+                      annotation_text=f"Baseline rata-rata Feedback = {baseline_opt:.1f}",
+                      annotation_position="bottom right")
+
+        fig.update_layout(
+            title=f"Korelasi Feedback vs Ketidaksesuaian FRAUD (r={corr_val:.2f})",
+            xaxis_title="Perusahaan - Site",
+            yaxis_title="Skala (0–5)",
+            height=600,
+            legend=dict(x=0, y=-0.25, orientation="h")  # legend pindah bawah
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # tampilkan dataframe
+        st.subheader("📋 Dataframe dengan Skala (Fraud)")
+        st.dataframe(df_corr[[
+            "perusahaan","site","feedback_q2","jumlah_ketidaksesuaian",
+            "jumlah_perilaku","jumlah_nonperilaku",
+            "ketidaksesuaian_scaled","perilaku_scaled","nonperilaku_scaled"
+        ]])
+    else:
+        st.warning("Kolom Q2 atau identitas site/perusahaan tidak ditemukan di survei.")
+else:
+    st.warning("❌ Data survei atau ketidaksesuaian kosong.")
+
+
+# ===============================
+# ANALISIS KORELASI RASIO FRAUD
+# ===============================
+st.header("📊 Analisis Korelasi: Rasio Fraud vs Feedback Q2")
+
+col_site = "site___lokasi_kerja"
+col_corp = "perusahaan_area_kerja_tambang"
+col_q2 = "2._seberapa_optimal_program_gbst_berjalan_selama_ini_di_perusahaan_anda?"
+
+if not df_survey.empty and not df.empty:
+    if col_site in df_survey.columns and col_corp in df_survey.columns and col_q2 in df_survey.columns:
+        # konversi feedback ke numeric
+        df_survey[col_q2] = pd.to_numeric(df_survey[col_q2], errors="coerce")
+
+        # hitung rata-rata feedback per perusahaan-site
+        df_feedback = (
+            df_survey.groupby([col_corp, col_site])[col_q2]
+            .mean().reset_index()
+            .rename(columns={col_corp:"perusahaan", col_site:"site", col_q2:"feedback_q2"})
+        )
+
+        # hitung fraud & total temuan
+        df_total = df.groupby(["perusahaan","site"]).size().reset_index(name="total_temuan")
+        df_fraud = df[df["status_temuan"]=="Fraud"].groupby(["perusahaan","site"]).size().reset_index(name="fraud_count")
+
+        # merge
+        df_ratio = pd.merge(df_total, df_fraud, on=["perusahaan","site"], how="left")
+        df_ratio["fraud_count"] = df_ratio["fraud_count"].fillna(0)
+        df_ratio["rasio_fraud"] = df_ratio["fraud_count"] / df_ratio["total_temuan"]
+
+        # merge dengan feedback
+        df_corr = pd.merge(df_feedback, df_ratio, on=["perusahaan","site"], how="left")
+
+        # baseline
+        baseline_feedback = df_corr["feedback_q2"].mean()
+        baseline_ratio = df_corr["rasio_fraud"].mean()
+
+        # korelasi
+        corr_val = df_corr["feedback_q2"].corr(df_corr["rasio_fraud"])
+
+        # gabungan label perusahaan-site
+        df_corr["company_site"] = df_corr["perusahaan"] + " - " + df_corr["site"]
+
+        # ================= VISUALISASI =================
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df_corr["company_site"], y=df_corr["feedback_q2"],
+                                 mode="lines+markers", name="Feedback Q2 (1-5)", line=dict(color="blue")))
+        fig.add_trace(go.Scatter(x=df_corr["company_site"], y=df_corr["rasio_fraud"]*5,
+                                 mode="lines+markers", name="Rasio Fraud (scaled 0-5)", line=dict(color="red", dash="dot")))
+
+        # baseline feedback
+        fig.add_hline(y=baseline_feedback, line_dash="dot", line_color="green",
+                      annotation_text=f"Baseline Feedback = {baseline_feedback:.2f}",
+                      annotation_position="bottom right")
+
+        fig.update_layout(
+            title=f"Korelasi Feedback vs Rasio Fraud (r={corr_val:.2f})",
+            xaxis_title="Perusahaan - Site",
+            yaxis_title="Skala (0–5)",
+            height=600,
+            legend=dict(x=0, y=-0.25, orientation="h")
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # tampilkan dataframe
+        st.subheader("📋 Dataframe dengan Rasio Fraud")
+        st.dataframe(df_corr[[
+            "perusahaan","site","feedback_q2","total_temuan","fraud_count","rasio_fraud"
+        ]])
+    else:
+        st.warning("Kolom Q2 atau identitas site/perusahaan tidak ditemukan di survei.")
+else:
+    st.warning("❌ Data survei atau ketidaksesuaian kosong.")
+
+
+# ===============================
+# ANALISIS KORELASI FEEDBACK Q2 VS RASIO MAN POWER
+# ===============================
+st.header("📊 Analisis Korelasi: Feedback Q2 vs Rasio Man Power")
+
+col_site = "site___lokasi_kerja"
+col_corp = "perusahaan_area_kerja_tambang"
+col_q2 = "2._seberapa_optimal_program_gbst_berjalan_selama_ini_di_perusahaan_anda?"
+
+# Data Man Power per perusahaan-site
+man_power_map = {
+    "BUMA BMO": 278,
+    "FAD BMO": 128,
+    "KDC BMO": 52,
+    "MTL BMO": 185,
+    "PAMA BMO": 391,
+    "PAMA GMO": 198,
+    "BUMA LMO": 750,
+    "FAD LMO": 111,
+    "MTN SMO": 200
+}
+
+if not df_survey.empty and not df.empty:
+    if col_site in df_survey.columns and col_corp in df_survey.columns and col_q2 in df_survey.columns:
+        # Feedback Q2
+        df_survey[col_q2] = pd.to_numeric(df_survey[col_q2], errors="coerce")
+        df_feedback = (
+            df_survey.groupby([col_corp, col_site])[col_q2]
+            .mean().reset_index()
+            .rename(columns={col_corp: "perusahaan", col_site: "site", col_q2: "feedback_q2"})
+        )
+
+        # Hitung total ketidaksesuaian (semua status, bisa juga difilter valid/fraud sesuai kebutuhan)
+        df_count = df.groupby(["perusahaan", "site"]).size().reset_index(name="jumlah_ketidaksesuaian")
+
+        # Merge feedback + ketidaksesuaian
+        df_corr = pd.merge(df_feedback, df_count, on=["perusahaan", "site"], how="left")
+        df_corr = df_corr.fillna(0)
+
+        # Tambahkan Man Power sesuai mapping
+        df_corr["key"] = df_corr["perusahaan"].astype(str).str.strip() + " " + df_corr["site"].astype(str).str.strip()
+        df_corr["man_power"] = df_corr["key"].map(man_power_map).fillna(0)
+
+        # Hitung rasio MP
+        df_corr["rasio_mp"] = df_corr.apply(
+            lambda row: row["jumlah_ketidaksesuaian"] / row["man_power"] if row["man_power"] > 0 else 0, axis=1
+        )
+
+        # Skala rasio MP ke 0–5
+        scaler = MinMaxScaler(feature_range=(0, 5))
+        df_corr["rasio_mp_scaled"] = scaler.fit_transform(df_corr[["rasio_mp"]])
+
+        # Baseline feedback & rasio
+        baseline_feedback = df_corr["feedback_q2"].mean()
+        baseline_rasio = df_corr["rasio_mp"].mean()
+
+        # Korelasi
+        corr_val = df_corr["feedback_q2"].corr(df_corr["rasio_mp"])
+
+        # Company-Site gabungan
+        df_corr["company_site"] = df_corr["perusahaan"] + " - " + df_corr["site"]
+
+        # ============== VISUALISASI ==============
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df_corr["company_site"], y=df_corr["feedback_q2"],
+                                 mode="lines+markers", name="Feedback Q2 (1-5)", line=dict(color="blue")))
+        fig.add_trace(go.Scatter(x=df_corr["company_site"], y=df_corr["rasio_mp_scaled"],
+                                 mode="lines+markers", name="Rasio MP (scaled 0-5)", line=dict(color="red")))
+
+        # Baseline feedback
+        fig.add_hline(y=baseline_feedback, line_dash="dot", line_color="green",
+                      annotation_text=f"Baseline Feedback = {baseline_feedback:.2f}",
+                      annotation_position="bottom right")
+        # Baseline rasio MP (pakai skala asli, bukan scaled)
+        fig.add_hline(y=scaler.transform([[baseline_rasio]])[0][0], line_dash="dot", line_color="red",
+                      annotation_text=f"Baseline Rasio MP = {baseline_rasio:.2%}",
+                      annotation_position="bottom right")
+
+        fig.update_layout(
+            title=f"Korelasi Feedback vs Rasio Man Power (r={corr_val:.2f})",
+            xaxis_title="Perusahaan - Site",
+            yaxis_title="Skala (0–5)",
+            height=600,
+            legend=dict(x=0, y=-0.25, orientation="h")
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # tampilkan dataframe
+        st.subheader("📋 Dataframe Rasio Man Power")
+        st.dataframe(df_corr[[
+            "perusahaan", "site", "feedback_q2", "jumlah_ketidaksesuaian",
+            "man_power", "rasio_mp", "rasio_mp_scaled"
+        ]])
+    else:
+        st.warning("Kolom Q2 atau identitas site/perusahaan tidak ditemukan di survei.")
+else:
+    st.warning("❌ Data survei atau ketidaksesuaian kosong.")
+
 
 # ===============================
 # EKSPOR DATA
