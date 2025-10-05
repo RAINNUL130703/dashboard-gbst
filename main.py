@@ -4,32 +4,22 @@ import plotly.express as px
 import plotly.graph_objects as go
 from pyproj import Transformer
 import folium
-from folium.plugins import MarkerCluster
 from streamlit_folium import st_folium
-import math
+import calendar, re, math
 
 # ===============================
 # CONFIG DASHBOARD
 # ===============================
-st.set_page_config(
-    page_title="Dashboard GBST",
-    page_icon="🌍",
-    layout="wide"
-)
+st.set_page_config(page_title="Dashboard GBST", page_icon="🌍", layout="wide")
 
 # ===============================
 # LOGO + HEADER
 # ===============================
 logo = "assets/4logo.png"
 st.logo(logo, icon_image=logo, size="large")
-
 st.markdown(
-    """
-    <h1 style="font-size:24px; color:#000000; font-weight:bold; margin-bottom:0.5px;">
-    📈 Dashboard Gerakan Buang Sampah Terpilah (GBST)
-    </h1>
-    """,
-    unsafe_allow_html=True
+    "<h1 style='font-size:24px; color:#000000; font-weight:bold; margin-bottom:0.5px;'>📈 Dashboard Gerakan Buang Sampah Terpilah (GBST)</h1>",
+    unsafe_allow_html=True,
 )
 
 # ===============================
@@ -42,34 +32,30 @@ def norm_cols(df: pd.DataFrame) -> pd.DataFrame:
 
 def company_to_code(s: pd.Series) -> pd.Series:
     return (
-        s.astype(str)
-         .str.upper()
-         .str.replace(r"[^A-Z ]", "", regex=True)
-         .str.split()
-         .apply(lambda t: t[-1] if len(t) else "")
+        s.astype(str).str.upper().str.replace(r"[^A-Z ]", "", regex=True)
+         .str.split().apply(lambda t: t[-1] if len(t) else "")
     )
+
+def fmt_num(x: float) -> str:
+    """Bulatkan cantik: kalau integer tampil 0 desimal, selain itu 2 desimal."""
+    if pd.isna(x): return "0"
+    return f"{x:,.0f}" if float(x).is_integer() else f"{x:,.2f}"
 
 # ===============================
 # PARSER KOORDINAT (UTM -> WGS84)
 # ===============================
 transformer = Transformer.from_crs("EPSG:32650", "EPSG:4326", always_xy=True)
-
 def parse_coord(easting, northing):
     try:
         e = float(str(easting).replace("°E","").replace("E","").strip())
         n = float(str(northing).replace("°N","").replace("N","").strip())
     except:
         return None, None
-
-    # Kasus 1: decimal degrees
-    if e <= 180 and n <= 90:
-        return e, n   # lon, lat
-
-    # Kasus 2: UTM
-    if e > 100000 and n > 100000:
+    if e <= 180 and n <= 90:     # decimal degrees
+        return e, n
+    if e > 100000 and n > 100000:  # UTM
         lon, lat = transformer.transform(e, n)
         return lon, lat
-
     return None, None
 
 # ===============================
@@ -77,7 +63,7 @@ def parse_coord(easting, northing):
 # ===============================
 sheet_url = "https://docs.google.com/spreadsheets/d/1cw3xMomuMOaprs8mkmj_qnib-Zp_9n68rYMgiRZZqBE/edit?usp=sharing"
 sheet_id = sheet_url.split("/")[5]
-sheet_names = ["Timbulan", "Program", "Ketidaksesuaian", "Survei_Online", "Survei_Offline", "CCTV", "Koordinat_UTM"]
+sheet_names = ["Timbulan","Program","Ketidaksesuaian","Survei_Online","Survei_Offline","CCTV","Koordinat_UTM"]
 
 all_df = {}
 for sheet in sheet_names:
@@ -89,419 +75,252 @@ for sheet in sheet_names:
         st.error(f"Gagal load sheet {sheet}: {e}")
         all_df[sheet] = pd.DataFrame()
 
-# Dataset (dinormalisasi kolomnya)
-df_timbulan = norm_cols(all_df.get("Timbulan", pd.DataFrame()).copy())
-df_program = norm_cols(all_df.get("Program", pd.DataFrame()).copy())
-df_ketidaksesuaian = norm_cols(all_df.get("Ketidaksesuaian", pd.DataFrame()).copy())
-df_online = norm_cols(all_df.get("Survei_Online", pd.DataFrame()).copy())
-df_offline = norm_cols(all_df.get("Survei_Offline", pd.DataFrame()).copy())
-df_cctv = norm_cols(all_df.get("CCTV", pd.DataFrame()).copy())
-df_koordinat = norm_cols(all_df.get("Koordinat_UTM", pd.DataFrame()).copy())
+# Normalisasi
+df_timbulan      = norm_cols(all_df.get("Timbulan", pd.DataFrame()))
+df_program       = norm_cols(all_df.get("Program", pd.DataFrame()))
+df_ketidaksesuaian = norm_cols(all_df.get("Ketidaksesuaian", pd.DataFrame()))
+df_online        = norm_cols(all_df.get("Survei_Online", pd.DataFrame()))
+df_offline       = norm_cols(all_df.get("Survei_Offline", pd.DataFrame()))
+df_cctv          = norm_cols(all_df.get("CCTV", pd.DataFrame()))
+df_koordinat     = norm_cols(all_df.get("Koordinat_UTM", pd.DataFrame()))
 
-
-# ===============================
-# SIMPAN SEMUA DATA KE SESSION_STATE
-# ===============================
+# Simpan di session_state (opsional dipakai halaman lain)
 st.session_state["data"] = {
-    "Timbulan": df_timbulan,
-    "Program": df_program,
-    "Ketidaksesuaian": df_ketidaksesuaian,
-    "Survei_Online": df_online,
-    "Survei_Offline": df_offline,
-    "CCTV": df_cctv,
-    "Koordinat_UTM": df_koordinat
+    "Timbulan": df_timbulan, "Program": df_program, "Ketidaksesuaian": df_ketidaksesuaian,
+    "Survei_Online": df_online, "Survei_Offline": df_offline,
+    "CCTV": df_cctv, "Koordinat_UTM": df_koordinat
 }
 
-
 # =============================
-# FILTER LOKAL (HANYA PAGE INI)
+# FILTER SIDEBAR
 # =============================
-import calendar
-import re
 st.sidebar.subheader("Filter Data")
+
 site_list = sorted(df_timbulan["site"].dropna().unique()) if "site" in df_timbulan.columns else []
-site_sel = st.sidebar.multiselect("Pilih Site", site_list, default=site_list[:4] if site_list else [])
+site_sel = st.sidebar.multiselect("Pilih Site", site_list, default=site_list)
 
 perusahaan_list = sorted(df_timbulan["perusahaan"].dropna().unique()) if "perusahaan" in df_timbulan.columns else []
-perusahaan_sel = st.sidebar.multiselect("Pilih Perusahaan", perusahaan_list, default=perusahaan_list[:6] if perusahaan_list else [])
+perusahaan_sel = st.sidebar.multiselect("Pilih Perusahaan", perusahaan_list, default=perusahaan_list)
 
-
-# 1. Deteksi kolom bulan-tahun otomatis
+# deteksi kolom bulan_tahun di df_program
 pattern = r"^(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)_\d{4}$"
-bulan_tahun_cols = [col for col in df_program.columns if re.match(pattern, str(col))]
+bulan_tahun_cols = [c for c in df_program.columns if re.match(pattern, c)]
 
-# 2. Reshape wide → long
-df_prog_long = df_program.melt(
-    id_vars=[col for col in df_program.columns if col not in bulan_tahun_cols],
-    value_vars=bulan_tahun_cols,
-    var_name="Bulan-Tahun",
-    value_name="Value"
-)
-#df_prog_long["tahun"] = df_prog_long["Bulan-Tahun"].apply(lambda x: int(x.split(" ")[1]))
-#df_prog_long["bulan"] = df_prog_long["Bulan-Tahun"].apply(lambda x: x.split(" ")[0])
+# reshape wide -> long utk program
+if bulan_tahun_cols:
+    df_prog_long = df_program.melt(
+        id_vars=[c for c in df_program.columns if c not in bulan_tahun_cols],
+        value_vars=bulan_tahun_cols,
+        var_name="bulan_tahun",
+        value_name="Value"
+    )
+    df_prog_long["tahun"] = df_prog_long["bulan_tahun"].apply(lambda x: int(x.split("_")[1]))
+    df_prog_long["bulan"] = df_prog_long["bulan_tahun"].apply(lambda x: x.split("_")[0].capitalize())
+else:
+    df_prog_long = df_program.copy()
+    df_prog_long["tahun"] = None
+    df_prog_long["bulan"] = None
 
-df_prog_long["tahun"] = df_prog_long["Bulan-Tahun"].apply(lambda x: int(x.split("_")[1]))
-df_prog_long["bulan"] = df_prog_long["Bulan-Tahun"].apply(lambda x: x.split("_")[0].capitalize())
+bulan_map = {"Januari":1,"Februari":2,"Maret":3,"April":4,"Mei":5,"Juni":6,
+             "Juli":7,"Agustus":8,"September":9,"Oktober":10,"November":11,"Desember":12}
 
+# filter bulan & tahun (ambil dari data program agar range realistis)
+tahun_tersedia = sorted(df_prog_long["tahun"].dropna().astype(int).unique().tolist())
+if not tahun_tersedia:
+    # fallback: kalau tidak ada, coba dari ketidaksesuaian
+    if "tanggallapor" in df_ketidaksesuaian.columns:
+        tgl = pd.to_datetime(df_ketidaksesuaian["tanggallapor"], dayfirst=True, errors="coerce")
+        tahun_tersedia = sorted(tgl.dt.year.dropna().astype(int).unique().tolist())
 
-# 3. Mapping nama bulan ke angka
-bulan_map = {
-   "Januari": 1, "Februari": 2, "Maret": 3, "April": 4,
-  "Mei": 5, "Juni": 6, "Juli": 7, "Agustus": 8,
-  "September": 9, "Oktober": 10, "November": 11, "Desember": 12
-}
-
-
-# 4. Bisa bikin kolom periode datetime (buat filter/plot)
-import datetime
-
-#df_prog_long["Periode"] = df_prog_long.apply(
-#    lambda row: datetime.datetime(row["Tahun"], bulan_map[row["Bulan"]], 1),
-#    axis=1
-#)
-
-#df_prog_long["periode"] = pd.to_datetime(
-#    df_prog_long["tahun"].astype(int).astype(str) + "-" +
-#    df_prog_long["bulan"].map(bulan_map).astype(str) + "-01"
-#)
-
-df_prog_long["periode"] = pd.to_datetime(
-    df_prog_long["tahun"].astype(str) + "-" +
-    df_prog_long["bulan"].map(bulan_map).astype(str) + "-01"
-)
-
-# ======================
-# Filter Bulan & Tahun
-# ======================
-#df_ketidaksesuaian = all_df.get("Ketidaksesuaian", pd.DataFrame())
-df_ketidaksesuaian["tanggallapor"] = pd.to_datetime(df_ketidaksesuaian["tanggallapor"], dayfirst=True, errors="coerce")
-df_ketidaksesuaian["tahun"] = df_ketidaksesuaian["tanggallapor"].dt.year
-df_ketidaksesuaian["bulan"] = df_ketidaksesuaian["tanggallapor"].dt.month
-# Buat filter selectbox
-# Pastikan pakai df_ketidaksesuaian yang sudah punya kolom Tahun & Bulan
-tahun_tersedia = sorted(df_prog_long["tahun"].dropna().astype(int).unique())
-#bulan_tersedia = [b for b in calendar.month_name[1:]]  # ['Januari', ..., 'Desember']
-bulan_tersedia = list(bulan_map.keys())  
-
-
-    #tahun_pilihan = st.selectbox("Pilih Tahun:", tahun_tersedia, index=len(tahun_tersedia)-1)
+bulan_tersedia = list(bulan_map.keys())
 tahun_pilihan = st.sidebar.multiselect("Pilih Tahun:", tahun_tersedia, default=tahun_tersedia)
-
 bulan_pilihan = st.sidebar.multiselect("Pilih Bulan:", bulan_tersedia, default=bulan_tersedia)
 
-# Filter dataframe sesuai pilihan user
-# Convert nama bulan ke angka untuk filter Ketidaksesuaian
-bulan_pilihan_num = [bulan_map[b] for b in bulan_pilihan]
 # =============================
-# Apply Filter
+# Helper filter global
 # =============================
-# Apply filter ke df_program
-df_prog_filtered = df_prog_long[
-    (df_prog_long["tahun"].isin(tahun_pilihan)) &
-    (df_prog_long["bulan"].isin(bulan_pilihan))].sort_values(by=["tahun","periode"])
-total_program_filtered = df_prog_filtered["Value"].sum()
+def apply_site_perusahaan_filter(df, site_col="site", perusahaan_col="perusahaan"):
+    d = df.copy()
+    if site_sel and site_col in d.columns:
+        d = d[d[site_col].isin(site_sel)]
+    if perusahaan_sel and perusahaan_col in d.columns:
+        d = d[d[perusahaan_col].isin(perusahaan_sel)]
+    return d
 
-# Apply filter ke df_ketidaksesuaian
-df_ketidaksesuaian["tanggallapor"] = pd.to_datetime(df_ketidaksesuaian["tanggallapor"], dayfirst=True, errors="coerce")
-df_ketidaksesuaian["tahun"] = df_ketidaksesuaian["tanggallapor"].dt.year
-df_ketidaksesuaian["bulan"] = df_ketidaksesuaian["tanggallapor"].dt.month
+def apply_program_filter(df_prog_long, tahun_pilihan, bulan_pilihan):
+    d = df_prog_long.copy()
+    if "tahun" in d.columns and tahun_pilihan:
+        d = d[d["tahun"].isin(tahun_pilihan)]
+    if "bulan" in d.columns and bulan_pilihan:
+        d = d[d["bulan"].isin(bulan_pilihan)]
+    d = apply_site_perusahaan_filter(d)
+    return d
 
-df_ket_filtered = df_ketidaksesuaian[
-    (df_ketidaksesuaian["tahun"].isin(tahun_pilihan)) &
-    (df_ketidaksesuaian["bulan"].isin([bulan_map[b]for b in bulan_pilihan]))&
-    (df_ketidaksesuaian["status_temuan"]=="Valid")
-].sort_values(by=["tahun","bulan"])
+def apply_ketidaksesuaian_filter(df_ket, tahun_pilihan, bulan_pilihan):
+    d = df_ket.copy()
+    if "tanggallapor" in d.columns:
+        d["tanggallapor"] = pd.to_datetime(d["tanggallapor"], dayfirst=True, errors="coerce")
+        d["tahun"] = d["tanggallapor"].dt.year
+        d["bulan"] = d["tanggallapor"].dt.month
+        if tahun_pilihan:
+            d = d[d["tahun"].isin(tahun_pilihan)]
+        if bulan_pilihan:
+            bulan_num = [bulan_map[b] for b in bulan_pilihan]
+            d = d[d["bulan"].isin(bulan_num)]
+    if "status_temuan" in d.columns:
+        d = d[d["status_temuan"].str.lower()=="valid"]
+    d = apply_site_perusahaan_filter(d)
+    return d
 
-# Filter Timbulan
-df_timbulan_filtered = df_timbulan.copy()
-if site_sel:
-    df_timbulan_filtered = df_timbulan_filtered[df_timbulan_filtered["site"].isin(site_sel)]
-if perusahaan_sel:
-    df_timbulan_filtered = df_timbulan_filtered[df_timbulan_filtered["perusahaan"].isin(perusahaan_sel)]
-total_timbulan = df_timbulan_filtered["timbulan"].sum()
+# apply semua filter
+df_timbulan_f   = apply_site_perusahaan_filter(df_timbulan)
+df_prog_f       = apply_program_filter(df_prog_long, tahun_pilihan, bulan_pilihan)
+df_ket_f        = apply_ketidaksesuaian_filter(df_ketidaksesuaian, tahun_pilihan, bulan_pilihan)
+df_online_f     = apply_site_perusahaan_filter(df_online)
+df_offline_f    = apply_site_perusahaan_filter(df_offline)
+df_cctv_f       = apply_site_perusahaan_filter(df_cctv)
+df_koordinat_f  = apply_site_perusahaan_filter(df_koordinat)
 
-df_timbulan_sum = df_timbulan_filtered.groupby(["perusahaan","site"])["timbulan"].sum().reset_index()
-total_timbulan = df_timbulan_sum["timbulan"].sum()
-total_program = df_prog_filtered["Value"].sum()
 # =============================
-# Info Jumlah Hari
+# DAYS PERIOD (ikut filter)
 # =============================
-import calendar
-
-# Hitung total hari dari semua kombinasi bulan & tahun yang dipilih
 days_period = 0
 for y in tahun_pilihan:
     for b in bulan_pilihan:
-        month_num = bulan_map[b]
-        days_period += calendar.monthrange(y, month_num)[1]
-
+        days_period += calendar.monthrange(y, bulan_map[b])[1]
+if days_period == 0:
+    days_period = 1
 st.info(f"📅 Total jumlah hari periode filter: **{days_period} hari**")
-# Apply filter lokal
-#df_filtered = dt_timbulan.copy()
-#if site_sel:
-   # df_filtered= df_filtered[df_filtered["Site"].isin(site_sel)]
-#if perusahaan_sel:
- #   df_filtered = df_filtered[df_filtered["Perusahaan"].isin(perusahaan_sel)]
-# ==============================
-# Fungsi filter global
-# ==============================
-def apply_site_perusahaan_filter(df, site_col="site", perusahaan_col="perusahaan"):
-    df_filtered = df.copy()
-    if site_sel and site_col in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered[site_col].isin(site_sel)]
-    if perusahaan_sel and perusahaan_col in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered[perusahaan_col].isin(perusahaan_sel)]
-    return df_filtered
 
-# ==============================
-# FILTER TAHUN & BULAN untuk Program
-# ==============================
-def apply_program_filter(df_prog_long, tahun_pilihan, bulan_pilihan):
-    bulan_map = {
-       "Januari": 1, "Februari": 2, "Maret": 3, "April": 4,
-       "Mei": 5, "Juni": 6, "Juli": 7, "Agustus": 8,
-       "September": 9, "Oktober": 10, "November": 11, "Desember": 12
-    }
-    bulan_pilihan_num = [bulan_map[b] for b in bulan_pilihan]
-    
-    df_filtered = df_prog_long[
-        (df_prog_long["tahun"].isin(tahun_pilihan)) &
-        (df_prog_long["bulan"].map(bulan_map).isin(bulan_pilihan_num))
-    ]
-    
-    # Filter site & perusahaan juga
-    df_filtered = apply_site_perusahaan_filter(df_filtered)
-    
-    return df_filtered
-
-# ==============================
-# FILTER TAHUN & BULAN untuk Ketidaksesuaian
-# ==============================
-def apply_ketidaksesuaian_filter(df_ketidaksesuaian, tahun_pilihan, bulan_pilihan):
-    bulan_map = {
-       "Januari": 1, "Februari": 2, "Maret": 3, "April": 4,
-       "Mei": 5, "Juni": 6, "Juli": 7, "Agustus": 8,
-       "September": 9, "Oktober": 10, "November": 11, "Desember": 12
-    }
-    bulan_pilihan_num = [bulan_map[b] for b in bulan_pilihan]
-
-    # Pastikan kolom tanggallapor datetime
-    df_ketidaksesuaian["tanggallapor"] = pd.to_datetime(df_ketidaksesuaian["tanggallapor"], dayfirst=True, errors="coerce")
-    df_ketidaksesuaian["tahun"] = df_ketidaksesuaian["tanggallapor"].dt.year
-    df_ketidaksesuaian["bulan"] = df_ketidaksesuaian["tanggallapor"].dt.month
-
-    df_filtered = df_ketidaksesuaian[
-        (df_ketidaksesuaian["tahun"].isin(tahun_pilihan)) &
-        (df_ketidaksesuaian["bulan"].isin(bulan_pilihan_num)) &
-        (df_ketidaksesuaian["status_temuan"] == "Valid")
-    ]
-    
-    # Filter site & perusahaan juga
-    df_filtered = apply_site_perusahaan_filter(df_filtered)
-    
-    return df_filtered
-
-# ==============================
-# Apply ke semua dataframe
-# ==============================
-df_timbulan_filtered = apply_site_perusahaan_filter(df_timbulan)
-df_prog_filtered = apply_program_filter(df_prog_long, tahun_pilihan, bulan_pilihan)
-df_ket_filtered = apply_ketidaksesuaian_filter(df_ketidaksesuaian, tahun_pilihan, bulan_pilihan)
-df_online_filtered = apply_site_perusahaan_filter(df_online)
-df_offline_filtered = apply_site_perusahaan_filter(df_offline)
-
-df_cctv_filtered = apply_site_perusahaan_filter(df_cctv)
-df_koordinat_filtered = apply_site_perusahaan_filter(df_koordinat)
-
-# ==============================
-# Hitung total setelah filter
-# ==============================
-total_timbulan = df_timbulan_filtered["timbulan"].sum() if "timbulan" in df_timbulan_filtered.columns else 0
-total_program = df_prog_filtered["Value"].sum() if "Value" in df_prog_filtered.columns else 0
-
-#=============================================================================================================
-
-
-st.markdown(
-    """
-    <h1 style="font-size:24px; color:#000000; font-weight:bold; margin-bottom:0.5px;">
-    📈Dashboard Gerakan Buang Sampah terpilah (GBST)
-    </h1>
-    """,
-    unsafe_allow_html=True
-)
-
-
-# ===============================
-# DYNAMIC DAYS PERIOD
-# ===============================
-if not df_program.empty and "tanggal" in df_program.columns:
-    df_program["tanggal"] = pd.to_datetime(df_program["tanggal"], errors="coerce")
-    start_date = df_program["tanggal"].min()
-    end_date = df_program["tanggal"].max()
-    days_period = (end_date - start_date).days if pd.notnull(start_date) and pd.notnull(end_date) else 609
-else:
-    days_period = 609
-
-# ===============================
-# PETA COLOR LIST
-# ===============================
-COLOR_LIST = [
-    "red", "blue", "green", "purple", "orange",
-    "darkred", "lightred", "beige", "darkblue", "darkgreen",
-    "cadetblue", "darkpurple", "white", "pink", "lightblue",
-    "lightgreen", "gray", "black", "lightgray"
-]
-
-def assign_color(value, unique_values):
-    idx = unique_values.index(value) % len(COLOR_LIST)
-    return COLOR_LIST[idx]
-
-# ===============================
+# =============================
 # TAB
-# ===============================
+# =============================
 tab1, tab2 = st.tabs(["Overview", "Data Quality Check"])
 
 with tab1:
     try:
         # ---------- METRIC DASAR ----------
-        if "timbulan" in df_timbulan.columns:
-            df_timbulan["timbulan"] = pd.to_numeric(
-                df_timbulan["timbulan"].astype(str).str.replace(",", "."),
-                errors="coerce"
-            )
-            total_timbulan = df_timbulan["timbulan"].sum()
-            total_timbulan_all = pd.to_numeric(
-                df_timbulan.get("data_input_total", 0), errors="coerce"
-            ).sum()
+        # Timbulan (kg/hari)
+        if "timbulan" in df_timbulan_f.columns:
+            df_timbulan_f["timbulan"] = pd.to_numeric(df_timbulan_f["timbulan"].astype(str).str.replace(",", "."), errors="coerce")
+            total_timbulan_hari = df_timbulan_f["timbulan"].sum()
+            total_timbulan_all  = pd.to_numeric(df_timbulan_f.get("data_input_total", 0), errors="coerce").sum()
         else:
-            total_timbulan = total_timbulan_all = 0
+            total_timbulan_hari = total_timbulan_all = 0
 
-        if "nama_program" in df_program.columns:
-            jumlah_program = df_program["nama_program"].dropna().shape[0]
+        # Jumlah program unik (bukan baris melt)
+        if "nama_program" in df_prog_f.columns:
+            jumlah_program = (
+                df_prog_f["nama_program"].astype(str).str.strip().replace({"": None}).dropna().nunique()
+            )
         else:
             jumlah_program = 0
 
-        if "status_temuan" in df_ketidaksesuaian.columns:
-            total_ketidaksesuaian = df_ketidaksesuaian.query("status_temuan == 'valid' or status_temuan == 'Valid'").shape[0]
-            temuan_masuk = df_ketidaksesuaian["status_temuan"].count()
-        else:
-            total_ketidaksesuaian, temuan_masuk = 0, 0
+        # ===============================
+        # KETIDAKSESUAIAN (Valid / Total)
+        # ===============================
+        # Total laporan (semua status) pakai filter site, perusahaan, tahun, bulan
+        dk_all = apply_site_perusahaan_filter(df_ketidaksesuaian.copy())
+        if "tanggallapor" in dk_all.columns:
+            dk_all["tanggallapor"] = pd.to_datetime(dk_all["tanggallapor"], dayfirst=True, errors="coerce")
+            dk_all["tahun"] = dk_all["tanggallapor"].dt.year
+            dk_all["bulan"] = dk_all["tanggallapor"].dt.month
+            if tahun_pilihan:
+                dk_all = dk_all[dk_all["tahun"].isin(tahun_pilihan)]
+            if bulan_pilihan:
+                bulan_num = [bulan_map[b] for b in bulan_pilihan]
+                dk_all = dk_all[dk_all["bulan"].isin(bulan_num)]
+
+        total_reports = len(dk_all)
+
+        # Jumlah valid sudah otomatis ada di df_ket_f
+        total_valid = len(df_ket_f) if not df_ket_f.empty else 0
 
         # ---------- METRIC ----------
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Timbulan (kg)", f"{total_timbulan_all:,.0f}")
-        with col2:
-            st.metric("Rata-rata Timbulan (kg/hari)", f"{total_timbulan:.2f}")
-        with col3:
-            st.metric("Jumlah Program", jumlah_program)
-        with col4:
-            st.metric("Ketidaksesuaian Valid", f"{total_ketidaksesuaian} / {temuan_masuk}")
+        c1,c2,c3,c4 = st.columns(4)
+        c1.metric("Total Timbulan (kg)", fmt_num(total_timbulan_all))
+        c2.metric("Rata-rata Timbulan (kg/hari)", fmt_num(total_timbulan_hari))
+        c3.metric("Jumlah Program", jumlah_program)
+        c4.metric("Ketidaksesuaian Valid", f"{total_valid} / {total_reports}")
 
         # =====================================================
-        # PENGOLAHAN & PENGURANGAN (LOGIKA LAMA DIPERTAHANKAN)
+        # KARTU (Reduce, Pengolahan, Sisa) — PAKAI df_prog_f (melt) SESUAI FILTER
         # =====================================================
-        days_period = 609  # Jan 2024 - Aug 2025
-        if "total_calc" in df_program.columns:
-            df_program["total_calc"] = pd.to_numeric(
-                df_program["total_calc"].astype(str).str.replace(",", "."),
-                errors="coerce"
-            )
-            total_program = df_program["total_calc"].sum()
-        else:
-            total_program = 0
+        # Sum per kategori dari kolom Value (angka bulanan), lalu / days_period
+        prog_pengolahan_per_hari = 0.0
+        prog_pengurangan_per_hari = 0.0
+        if not df_prog_f.empty and {"kategori","Value"}.issubset(df_prog_f.columns):
+            df_prog_f["Value"] = pd.to_numeric(df_prog_f["Value"], errors="coerce").fillna(0)
+            prog_pengolahan_per_hari = df_prog_f.loc[df_prog_f["kategori"]=="Program Pengelolaan","Value"].sum() / days_period
+            prog_pengurangan_per_hari = df_prog_f.loc[df_prog_f["kategori"]=="Program Pengurangan","Value"].sum() / days_period
 
-        avg_timbulan_perhari = total_timbulan
-        avg_program_perhari = total_program / days_period if days_period > 0 else 0
+        sisa_per_hari = max(total_timbulan_hari - prog_pengolahan_per_hari, 0)
+        persen_pengolahan = (prog_pengolahan_per_hari/total_timbulan_hari*100) if total_timbulan_hari>0 else 0
+        persen_sisa       = (sisa_per_hari/total_timbulan_hari*100) if total_timbulan_hari>0 else 0
 
-        if "kategori" in df_program.columns:
-            df_pengolahan = df_program[df_program["kategori"] == "Program Pengelolaan"]
-            total_pengolahan = df_pengolahan["total_calc"].sum()/days_period if not df_pengolahan.empty else 0
-            persen_pengolahan = (total_pengolahan / total_timbulan * 100) if total_timbulan > 0 else 0
-
-            df_pengurangan = df_program[df_program["kategori"] == "Program Pengurangan"]
-            total_pengurangan = df_pengurangan["total_calc"].sum()/days_period if not df_pengurangan.empty else 0
-            persen_pengurangan = (total_pengurangan / total_timbulan * 100) if total_timbulan > 0 else 0
-        else:
-            total_pengolahan = persen_pengolahan = total_pengurangan = persen_pengurangan = 0
-
-        total_sisa = total_timbulan - total_pengolahan
-        persen_sisa = (total_sisa / total_timbulan * 100) if total_timbulan > 0 else 0
-        persen_sisa = min(max(persen_sisa, 0), 100)
-
-        # CSS Card (sesuai versi mas)
+        # CSS card
         st.markdown("""
             <style>
-            .card {border: 1px solid #e0e0e0; border-radius: 12px; padding: 20px; background-color: #fff;
-                   box-shadow: 3px 3px 12px rgba(0,0,0,0.1); text-align: center; margin-bottom: 5px;}
-            .card h3 {font-size: 20px; color: #333; margin-bottom: 5px;}
-            .card h2 {font-size: 40px; color: #257d0a; margin: 0;}
-            .card p {font-size: 20px; color: #666; margin: 0;}
+            .card {border:1px solid #e0e0e0; border-radius:12px; padding:20px; background:#fff;
+                   box-shadow:3px 3px 12px rgba(0,0,0,0.1); text-align:center; margin-bottom:6px;}
+            .card h3 {font-size:20px; color:#333; margin-bottom:6px;}
+            .card h2 {font-size:32px; color:#257d0a; margin:0;}
+            .card p  {font-size:16px; color:#666; margin:0;}
             </style>
         """, unsafe_allow_html=True)
 
-        colA, colB, colC = st.columns(3)
-        with colA:
-            st.markdown(f"<div class='card'><h3>Pengurangan Sampah (Reduce)</h3><h2>{total_pengurangan:,.0f}</h2><p>kg/hari</p></div>", unsafe_allow_html=True)
-        with colB:
-            st.markdown(f"<div class='card'><h3>Pengolahan Sampah</h3><h2>{persen_pengolahan:.2f}%</h2><p>{total_pengolahan:,.0f} kg/hari dari timbulan</p></div>", unsafe_allow_html=True)
-        with colC:
-            st.markdown(f"<div class='card'><h3>Timbulan Tidak Terkelola</h3><h2>{persen_sisa:.2f}%</h2><p>{total_sisa:,.0f} kg/hari</p></div>", unsafe_allow_html=True)
-
+        ca, cb, cc = st.columns(3)
+        with ca:
+            st.markdown(f"<div class='card'><h3>Pengurangan Sampah (Reduce)</h3><h2>{fmt_num(prog_pengurangan_per_hari)}</h2><p>kg/hari</p></div>", unsafe_allow_html=True)
+        with cb:
+            st.markdown(f"<div class='card'><h3>Pengolahan Sampah</h3><h2>{persen_pengolahan:.2f}%</h2><p>{fmt_num(prog_pengolahan_per_hari)} kg/hari dari timbulan</p></div>", unsafe_allow_html=True)
+        with cc:
+            st.markdown(f"<div class='card'><h3>Timbulan Tidak Terkelola</h3><h2>{persen_sisa:.2f}%</h2><p>{fmt_num(sisa_per_hari)} kg/hari</p></div>", unsafe_allow_html=True)
 
         # =====================================================
-        # PETA SITE & CCTV
+        # PETA SITE & CCTV (logika peta tetap pakai total_calc/days_period)
         # =====================================================
         st.subheader("🗺️ Peta Lokasi Site & CCTV")
         filter_map = st.radio("Pilih data:", ["Timbulan + Site", "CCTV", "Keduanya"], horizontal=True)
-
-        fmap = folium.Map(location=[-2.0, 117.0], zoom_start=6)
+        fmap = folium.Map(location=[-2.0,117.0], zoom_start=6)
 
         # --- Site Timbulan ---
-        if not df_timbulan.empty and not df_koordinat.empty and filter_map in ["Timbulan + Site", "Keduanya"]:
-            df_timbulan["company_code"] = company_to_code(df_timbulan.get("perusahaan", ""))
-            agg_timbulan = df_timbulan.groupby(["site", "company_code"], as_index=False).agg(
-                total_timbulan=("timbulan", "sum")
-            )
+        if not df_timbulan.empty and not df_koordinat.empty and filter_map in ["Timbulan + Site","Keduanya"]:
+            df_timbulan["company_code"] = company_to_code(df_timbulan.get("perusahaan",""))
+            agg_timbulan = df_timbulan.groupby(["site","company_code"], as_index=False).agg(total_timbulan=("timbulan","sum"))
 
             if not df_program.empty and "kategori" in df_program.columns:
-                df_pengolahan = df_program[df_program["kategori"] == "Program Pengelolaan"].copy()
-                df_pengolahan["total_calc"] = pd.to_numeric(df_pengolahan["total_calc"], errors="coerce").fillna(0)
-                agg_pengolahan = df_pengolahan.groupby(["site", "perusahaan"], as_index=False).agg(
-                    total_pengolahan=("total_calc", "sum")
-                )
+                df_pengolahan = df_program[df_program["kategori"]=="Program Pengelolaan"].copy()
+                df_pengolahan["total_calc"] = pd.to_numeric(df_pengolahan.get("total_calc",0), errors="coerce").fillna(0)
+                agg_pengolahan = df_pengolahan.groupby(["site","perusahaan"], as_index=False).agg(total_pengolahan=("total_calc","sum"))
                 agg_pengolahan["company_code"] = company_to_code(agg_pengolahan["perusahaan"])
                 agg_pengolahan["sampah_terkelola"] = agg_pengolahan["total_pengolahan"] / days_period
             else:
                 agg_pengolahan = pd.DataFrame(columns=["site","company_code","sampah_terkelola"])
 
-            agg = agg_timbulan.merge(
-                agg_pengolahan[["site","company_code","sampah_terkelola"]],
-                on=["site","company_code"], how="left"
-            )
+            agg = agg_timbulan.merge(agg_pengolahan[["site","company_code","sampah_terkelola"]],
+                                     on=["site","company_code"], how="left")
             agg["sampah_terkelola"] = agg["sampah_terkelola"].fillna(0)
             agg["sampah_tidak_terkelola"] = agg["total_timbulan"] - agg["sampah_terkelola"]
 
-            if "x" in df_koordinat.columns and "y" in df_koordinat.columns:
-                df_koordinat["x"] = pd.to_numeric(df_koordinat["x"], errors="coerce")
-                df_koordinat["y"] = pd.to_numeric(df_koordinat["y"], errors="coerce")
-                df_koordinat = df_koordinat.dropna(subset=["x", "y"])
-                df_koordinat["company_code"] = company_to_code(df_koordinat.get("company", ""))
-
-                df_map = df_koordinat.merge(agg, on=["site", "company_code"], how="left")
+            if {"x","y"}.issubset(df_koordinat.columns):
+                dko = df_koordinat.copy()
+                dko["x"] = pd.to_numeric(dko["x"], errors="coerce")
+                dko["y"] = pd.to_numeric(dko["y"], errors="coerce")
+                dko = dko.dropna(subset=["x","y"])
+                dko["company_code"] = company_to_code(dko.get("company",""))
+                df_map = dko.merge(agg, on=["site","company_code"], how="left")
                 if not df_map.empty:
                     lon, lat = transformer.transform(df_map["x"].astype(float).values, df_map["y"].astype(float).values)
-                    df_map["lon"] = lon; df_map["lat"] = lat
-
+                    df_map["lon"], df_map["lat"] = lon, lat
                     for _, r in df_map.iterrows():
-                        popup_html = f"""
-                        <b>Site:</b> {r.get('site','-')}<br>
-                        <b>Perusahaan:</b> {r.get('company_code','-')}<br>
-                        <b>Total Timbulan:</b> {r.get('total_timbulan',0):,.0f} kg<br>
-                        <b>Sampah Terkelola:</b> {r.get('sampah_terkelola',0):,.2f} kg<br>
-                        <b>Sampah Tidak Terkelola:</b> {r.get('sampah_tidak_terkelola',0):,.2f} kg
-                        """
+                        popup_html = (
+                            f"<b>Site:</b> {r.get('site','-')}<br>"
+                            f"<b>Perusahaan:</b> {r.get('company_code','-')}<br>"
+                            f"<b>Total Timbulan:</b> {fmt_num(r.get('total_timbulan',0))} kg<br>"
+                            f"<b>Sampah Terkelola:</b> {fmt_num(r.get('sampah_terkelola',0))} kg<br>"
+                            f"<b>Sampah Tidak Terkelola:</b> {fmt_num(r.get('sampah_tidak_terkelola',0))} kg"
+                        )
                         folium.Marker(
                             location=[r["lat"], r["lon"]],
                             tooltip=f"{r['site']} - {r['company_code']}",
@@ -509,121 +328,96 @@ with tab1:
                             icon=folium.Icon(color="green", icon="trash", prefix="fa"),
                         ).add_to(fmap)
 
-        # --- CCTV pakai logika pages/5_CCTV.py ---
-        if not df_cctv.empty and "easting" in df_cctv.columns and "northing" in df_cctv.columns and filter_map in ["CCTV", "Keduanya"]:
-            lon_lat = df_cctv.apply(lambda r: pd.Series(parse_coord(r["easting"], r["northing"]), index=["lon","lat"]), axis=1)
-            df_cctv = pd.concat([df_cctv, lon_lat], axis=1)
-            valid = df_cctv.dropna(subset=["lat","lon"])
-            if not valid.empty:
-                unique_perusahaan = sorted(valid["perusahaan"].dropna().unique().tolist())
-                for _, row in valid.iterrows():
-                    color = assign_color(row["perusahaan"], unique_perusahaan)
-                    popup_text = f"""
-                    <b>{row.get('nama_titik_penaatan_ts','')}</b><br>
-                    {row.get('perusahaan','')} - {row.get('site','')}<br>
-                    Coverage: {row.get('coverage_cctv','')}
-                    """
-                    folium.Marker(
-                        location=[float(row["lat"]), float(row["lon"])],
-                        popup=popup_text,
-                        tooltip=row.get("nama_titik_penaatan_ts",""),
-                        icon=folium.Icon(color=color, icon="camera", prefix="fa")
-                    ).add_to(fmap)
+        # --- CCTV ---
+        if not df_cctv.empty and {"easting","northing"}.issubset(df_cctv.columns) and filter_map in ["CCTV","Keduanya"]:
+            dcc = df_cctv.copy()
+            lonlat = dcc.apply(lambda r: pd.Series(parse_coord(r["easting"], r["northing"]), index=["lon","lat"]), axis=1)
+            dcc = pd.concat([dcc, lonlat], axis=1).dropna(subset=["lat","lon"])
+            uniq_comp = sorted(dcc["perusahaan"].dropna().unique().tolist())
+            color_list = ["red","blue","green","purple","orange","darkred","lightred","beige","darkblue","darkgreen",
+                          "cadetblue","darkpurple","white","pink","lightblue","lightgreen","gray","black","lightgray"]
+            def assign_color(val):
+                if not uniq_comp: return "blue"
+                return color_list[uniq_comp.index(val) % len(color_list)]
+            for _, row in dcc.iterrows():
+                popup_text = (
+                    f"<b>{row.get('nama_titik_penaatan_ts','')}</b><br>"
+                    f"{row.get('perusahaan','')} - {row.get('site','')}<br>"
+                    f"Coverage: {row.get('coverage_cctv','')}"
+                )
+                folium.Marker(
+                    location=[float(row["lat"]), float(row["lon"])],
+                    popup=popup_text,
+                    tooltip=row.get("nama_titik_penaatan_ts",""),
+                    icon=folium.Icon(color=assign_color(row.get("perusahaan","")), icon="camera", prefix="fa")
+                ).add_to(fmap)
 
         st_folium(fmap, height=600, use_container_width=True)
 
         # =====================================================
-        # GRAFIK TIMBULAN (VERSI LAMA – TIDAK DIUBAH)
+        # GRAFIK TIMBULAN – tidak diubah
         # =====================================================
-        col1, col2 = st.columns([0.5, 0.5])
+        col1, col2 = st.columns([0.5,0.5])
         if not df_timbulan.empty and "jenis_timbulan" in df_timbulan.columns:
             jenis_unique = df_timbulan["jenis_timbulan"].unique()
             colors = px.colors.sequential.Viridis[:len(jenis_unique)]
-            color_map = {j: c for j, c in zip(jenis_unique, colors)}
+            cmap = {j:c for j,c in zip(jenis_unique, colors)}
 
             with col1:
-                st.markdown('<p style="text-align: center;font-weight: bold;">🥧 Proporsi Timbulan Berdasarkan Jenis</p>', unsafe_allow_html=True)
+                st.markdown('<p style="text-align:center;font-weight:bold;">🥧 Proporsi Timbulan Berdasarkan Jenis</p>', unsafe_allow_html=True)
                 jenis_sum = df_timbulan.groupby("jenis_timbulan")["timbulan"].sum()
-                fig2 = px.pie(
-                    names=jenis_sum.index, values=jenis_sum.values,
-                    hole=0.4, color=jenis_sum.index, color_discrete_map=color_map,
-                    template="plotly_white"
-                )
+                fig2 = px.pie(names=jenis_sum.index, values=jenis_sum.values,
+                              hole=0.4, color=jenis_sum.index, color_discrete_map=cmap, template="plotly_white")
                 fig2.update_traces(textinfo="percent+label", showlegend=True)
                 st.plotly_chart(fig2, use_container_width=True)
 
             with col2:
-                st.markdown('<p style="text-align:center;font-weight: bold;">Proporsi Timbulan Per Site</p>', unsafe_allow_html=True)
-                total_site = df_timbulan.groupby(["site", "jenis_timbulan"], as_index=False)["timbulan"].sum()
-                total_site = total_site.sort_values(by=["site", "timbulan"], ascending=[True, False])
-                fig1 = px.bar(
-                    total_site, y="site", x="timbulan", color="jenis_timbulan",
-                    orientation='h', text="timbulan", template="plotly_white",
-                    labels={"timbulan":"Total Timbulan (kg)", "jenis_timbulan":"Jenis Timbulan"},
-                    color_discrete_map=color_map, height=400
-                )
+                st.markdown('<p style="text-align:center;font-weight:bold;">Proporsi Timbulan Per Site</p>', unsafe_allow_html=True)
+                total_site = df_timbulan.groupby(["site","jenis_timbulan"], as_index=False)["timbulan"].sum()
+                total_site = total_site.sort_values(by=["site","timbulan"], ascending=[True,False])
+                fig1 = px.bar(total_site, y="site", x="timbulan", color="jenis_timbulan",
+                              orientation="h", text="timbulan", template="plotly_white",
+                              labels={"timbulan":"Total Timbulan (kg)", "jenis_timbulan":"Jenis Timbulan"},
+                              color_discrete_map=cmap, height=400)
                 fig1.update_traces(texttemplate='%{text:,.0f}', textposition="outside")
                 st.plotly_chart(fig1, use_container_width=True)
 
         # =====================================================
-        # 🔹 SURVEI & KETIDAKSESUAIAN
+        # Survei & Ketidaksesuaian (ringkas)
         # =====================================================
         st.subheader("📊 Survei & Ketidaksesuaian")
-
-        # Pie Ketidaksesuaian (Valid)
         if not df_ketidaksesuaian.empty and "kategori_subketidaksesuaian" in df_ketidaksesuaian.columns:
-            df_valid = df_ketidaksesuaian[df_ketidaksesuaian["status_temuan"].str.lower() == "valid"]
+            df_valid = df_ketidaksesuaian[df_ketidaksesuaian["status_temuan"].str.lower()=="valid"]
             if not df_valid.empty:
                 prop = df_valid["kategori_subketidaksesuaian"].value_counts()
-                fig_ket = px.pie(
-                    names=prop.index, values=prop.values, hole=0.4,
-                    color=prop.index, template="plotly_white",
-                    color_discrete_map={"Perilaku":"#347829","Non Perilaku":"#78b00a"}
-                )
+                fig_ket = px.pie(names=prop.index, values=prop.values, hole=0.4,
+                                 color=prop.index, template="plotly_white",
+                                 color_discrete_map={"Perilaku":"#347829","Non Perilaku":"#78b00a"})
                 fig_ket.update_traces(textinfo="percent+label")
                 st.markdown("<p style='font-weight:bold;text-align:center;'>⚠️ Proporsi Ketidaksesuaian</p>", unsafe_allow_html=True)
                 st.plotly_chart(fig_ket, use_container_width=True)
 
-        # Gabung survei online+offline
+        # Gauge survei Q2
         df_survey = pd.concat([df_online, df_offline], ignore_index=True)
-
-        # Kolom pertanyaan (biarkan sesuai punyamu)
         col_q = "2. Seberapa optimal program GBST berjalan selama ini di perusahaan Anda?"
-
-        if not df_survey.empty:
-            # Kalau nama kolom sedikit berbeda, coba cari yang mirip
-            if col_q not in df_survey.columns:
-                candidates = [c for c in df_survey.columns if "optimal" in c.lower() and "gbst" in c.lower()]
-                if candidates:
-                    col_q = candidates[0]
-
+        if not df_survey.empty and col_q not in df_survey.columns:
+            cand = [c for c in df_survey.columns if ("optimal" in c.lower() and "gbst" in c.lower())]
+            if cand: col_q = cand[0]
         if col_q in df_survey.columns:
             df_survey[col_q] = pd.to_numeric(df_survey[col_q], errors="coerce")
             df_survey = df_survey.dropna(subset=[col_q])
-
             if not df_survey.empty:
                 avg_score = df_survey[col_q].mean()
-                max_score = df_survey[col_q].max()
-                max_score = max(max_score, 1)
-
+                max_score = max(df_survey[col_q].max(), 1)
                 gauge_fig = go.Figure(go.Indicator(
-                    mode="gauge+number",
-                    value=avg_score,
-                    title={"text": "Rata-rata Skor Optimalitas Program"},
-                    gauge={
-                        'axis': {'range': [0, max_score]},
-                        'bar': {'color': "green"},
-                        'steps': [
-                            {'range': [0, max_score * 0.5], 'color': "#F58C62"},
-                            {'range': [max_score * 0.5, max_score * 0.8], 'color': "#E1EF47"},
-                            {'range': [max_score * 0.8, max_score], 'color': "#4CB817"}
-                        ]
-                    }
+                    mode="gauge+number", value=avg_score,
+                    title={"text":"Rata-rata Skor Optimalitas Program"},
+                    gauge={'axis':{'range':[0,max_score]}, 'bar':{'color':"green"},
+                           'steps':[{'range':[0,max_score*0.5],'color':"#F58C62"},
+                                    {'range':[max_score*0.5,max_score*0.8],'color':"#E1EF47"},
+                                    {'range':[max_score*0.8,max_score],'color':"#4CB817"}]}
                 ))
                 st.plotly_chart(gauge_fig, use_container_width=True)
-
-            else:
-                st.warning("Data survei kosong setelah konversi angka untuk kolom optimalitas.")
         else:
             st.warning(f"Kolom '{col_q}' tidak ditemukan dalam data survei.")
 
@@ -639,8 +433,7 @@ with tab2:
     st.subheader("📋 Preview Data Ketidaksesuaian")
     st.dataframe(df_ketidaksesuaian.head(100) if not df_ketidaksesuaian.empty else "Data Ketidaksesuaian kosong.")
     st.subheader("📋 Preview Data Survei (Online + Offline)")
-    df_survey_preview = pd.concat([df_online, df_offline], ignore_index=True)
-    st.dataframe(df_survey_preview.head(100) if not df_survey_preview.empty else "Data Survei kosong.")
+    st.dataframe(pd.concat([df_online, df_offline], ignore_index=True).head(100) if not df_online.empty or not df_offline.empty else "Data Survei kosong.")
     st.subheader("📋 Preview Data Koordinat UTM & CCTV")
     st.dataframe(df_koordinat.head(50) if not df_koordinat.empty else "Data Koordinat kosong.")
     st.dataframe(df_cctv.head(50) if not df_cctv.empty else "Data CCTV kosong.")
