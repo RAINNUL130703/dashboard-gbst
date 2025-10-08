@@ -432,28 +432,28 @@ fig_bar2 = go.Figure()
 
 fig_bar2.add_bar(
     x=df_bar["label"], y=df_bar["total_timbulan"],
-    name="Timbulan", marker_color="#ffff99",
+    name="Timbulan", marker_color="#d7d7d9",
     text=df_bar["total_timbulan"].round(2),
     textposition="outside"
 )
 
 fig_bar2.add_bar(
     x=df_bar["label"], y=df_bar["sampah_terkelola"],
-    name="Terkelola (per hari)", marker_color="#1b7837",
+    name="Termanfaatkan (per hari)", marker_color="#2ded67",
     text=df_bar["sampah_terkelola"].round(2),
     textposition="auto"
 )
 
 fig_bar2.add_bar(
     x=df_bar["label"], y=df_bar["sampah_tidak_terkelola"],
-    name="Tidak Terkelola (per hari)", marker_color="#b2df8a",
+    name="Tidak Termanfaatkan (per hari)", marker_color="#f72525",
     text=df_bar["sampah_tidak_terkelola"].round(2),
     textposition="outside"
 )
 
 fig_bar2.add_bar(
     x=df_bar["label"], y=df_bar["reduce_perhari"],
-    name="Reduce (per hari)", marker_color="#4daf4a",
+    name="Reduce (per hari)", marker_color="#033801",
     text=df_bar["reduce_perhari"].round(2),
     textposition="auto"
 )
