@@ -420,12 +420,11 @@ colA, colB, colC, colD = st.columns(4)
 with colA:
     st.markdown(f"<div class='card'><h3>Timbulan</h3><h2>{total_timbulan_all:,.2f}</h2><p>kg total</p></div>", unsafe_allow_html=True)
 with colB:
-    st.markdown(f"<div class='card'><h3>Terkelola</h3><h2>{persen_terkelola:.1f}%</h2><p>{total_terkelola_all:,.2f} kg</p></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='card'><h3>Termanfaatkan</h3><h2>{persen_terkelola:.1f}%</h2><p>{total_terkelola_all:,.2f} kg</p></div>", unsafe_allow_html=True)
 with colC:
-    st.markdown(f"<div class='card'><h3>Reduce</h3><h2>{persen_reduce:.1f}%</h2><p>{total_reduce_all:,.2f} kg</p></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='card'><h3>Tidak Termanfaatkan</h3>"f"<h2 style='color:#d00000;'>{persen_tidak_terkelola:.1f}%</h2>"f"<p>{total_tidak_terkelola_all:,.2f} kg</p></div>",unsafe_allow_html=True)
 with colD:
-    st.markdown(f"<div class='card'><h3>Tidak Terkelola</h3><h2>{persen_tidak_terkelola:.1f}%</h2><p>{total_tidak_terkelola_all:,.2f} kg</p></div>", unsafe_allow_html=True)
-
+    st.markdown(f"<div class='card'><h3>Reduce</h3><h2>{persen_reduce:.1f}%</h2><p>{total_reduce_all:,.2f} kg</p></div>", unsafe_allow_html=True)
 # ===============================
 # PLOT
 # ===============================
