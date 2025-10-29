@@ -254,6 +254,57 @@ try:
                 </div>
             """, unsafe_allow_html=True)
 
+        # ======================================================
+        # 🔢 RATA-RATA TIMBULAN SESUAI SNI (kg/hari/orang)
+        # ======================================================
+        st.markdown("### ♻️ Rata-rata Timbulan Sesuai SNI (kg/hari/orang)")
+
+        if not df_timbulan.empty and {"Site","Perusahaan","Timbulan","Man Power"}.issubset(df_timbulan.columns):
+            df_timbulan_sni = df_timbulan.copy()
+
+            # Pastikan numeric
+            df_timbulan_sni["Timbulan"] = pd.to_numeric(df_timbulan_sni["Timbulan"], errors="coerce").fillna(0)
+            df_timbulan_sni["Man Power"] = pd.to_numeric(df_timbulan_sni["Man Power"], errors="coerce").fillna(0)
+
+            # --- Ambil Man Power unik per kombinasi Site–Perusahaan ---
+            df_mp_unik = (
+                df_timbulan_sni.drop_duplicates(subset=["Site","Perusahaan"], keep="last")[["Site","Perusahaan","Man Power"]]
+            )
+
+            # Total timbulan (semua baris terfilter)
+            total_timbulan_all = df_timbulan_sni["Timbulan"].sum()
+
+            # Total manpower unik (tanpa duplikat)
+            total_mp_unik = df_mp_unik["Man Power"].sum()
+
+            # Rata-rata timbulan per orang
+            rata_sni = total_timbulan_all / total_mp_unik if total_mp_unik > 0 else 0
+
+            st.markdown(f"""
+            <div style="background:#f8fff5;border:1px solid #a5d6a7;border-radius:8px;padding:15px;margin-bottom:10px;">
+                <h5 style="margin:0;color:#2e7d32;">Rata-rata Timbulan (SNI)</h5>
+                <p style="font-size:32px;margin:0;color:#1b5e20;"><strong>{rata_sni:.3f}</strong> kg/hari/orang</p>
+                <p style="font-size:13px;margin-top:4px;color:#388e3c;">Total Timbulan: {total_timbulan_all:,.0f} kg | Total Man Power Unik: {total_mp_unik:,}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # --- Tabel per site untuk transparansi ---
+            st.markdown("#### 📋 Rincian per Site")
+            df_site_sni = (
+                df_timbulan_sni.groupby("Site", as_index=False)
+                .agg(total_timbulan=("Timbulan","sum"))
+                .merge(
+                    df_mp_unik.groupby("Site", as_index=False)["Man Power"].sum(),
+                    on="Site", how="left"
+                )
+            )
+            df_site_sni["kg/hari/orang"] = (df_site_sni["total_timbulan"] / df_site_sni["Man Power"]).round(3)
+            df_site_sni = df_site_sni.sort_values("kg/hari/orang", ascending=False)
+            st.dataframe(df_site_sni, hide_index=True)
+
+        else:
+            st.warning("Kolom 'Timbulan', 'Man Power', 'Site', atau 'Perusahaan' belum lengkap untuk perhitungan SNI.")
+
 except Exception as e:
         st.error("Gagal menghitung metric.")
         st.exception(e)
