@@ -100,16 +100,36 @@ def cluster_program(name: str):
 
 df_program["cluster"] = df_program["nama_program"].map(cluster_program)
 
-def map_timbulan(cluster):
-    if cluster in ["Maggot/BSF","Komposting"]:
-        return "Organik"
-    if cluster == "Bank Sampah":
-        return "Anorganik"
-    if cluster == "Reduce Plastik":
-        return "Plastik"
-    return "Campuran"
+# =============================
+# JENIS SAMPAH (AMBIL DARI DATA ASLI)
+# =============================
+# Hanya fallback ke cluster kalau kolom tidak tersedia
+if "jenis_sampah" not in df_program.columns:
+    def map_timbulan(cluster):
+        if cluster in ["Maggot/BSF","Komposting"]:
+            return "Organik"
+        if cluster == "Bank Sampah":
+            return "Anorganik"
+        if cluster == "Reduce Plastik":
+            return "Plastik"
+        return "Campuran"
+    df_program["jenis_sampah"] = df_program["cluster"].map(map_timbulan)
 
-df_program["jenis_sampah"] = df_program["cluster"].map(map_timbulan)
+# Normalisasi ejaan
+df_program["jenis_sampah"] = (
+    df_program["jenis_sampah"]
+    .astype(str).str.strip().str.lower()
+    .replace({
+        "organik lainnya": "organik",
+        "sisa makanan & sayur": "organik",
+        "non organik": "anorganik",
+        "non-organik": "anorganik",
+        "an-organik": "anorganik",
+        "plastik": "plastik",
+        "campuran": "campuran"
+    })
+    .map({"organik":"Organik","anorganik":"Anorganik","plastik":"Plastik","campuran":"Campuran"})
+)
 
 # =============================
 # PALET WARNA ECO
@@ -147,6 +167,10 @@ site_sel = st.sidebar.multiselect("Pilih Site", site_list, default=site_list)
 
 perusahaan_list = sorted(df_program["perusahaan"].dropna().unique()) if "perusahaan" in df_program.columns else []
 perusahaan_sel = st.sidebar.multiselect("Pilih Perusahaan", perusahaan_list, default=perusahaan_list)
+
+# --- FILTER TAMBAHAN: Jenis Sampah (asli dari data) ---
+jenis_list = sorted(df_program["jenis_sampah"].dropna().unique()) if "jenis_sampah" in df_program.columns else []
+jenis_sel = st.sidebar.multiselect("Pilih Jenis Sampah", jenis_list, default=jenis_list)
 
 # ==== Tahun & Bulan dari HEADER kolom (agar 2024 selalu muncul bila ada kolomnya) ====
 pattern = r"^(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)_\d{4}$"
@@ -192,11 +216,18 @@ else:
     df_prog_filtered = df_program.copy()
     tahun_pilihan, bulan_pilihan = [], []
 
-# Terapkan filter Site/Perusahaan
+# =============================
+# APPLY FILTERS
+# =============================
 if site_sel and "site" in df_prog_filtered.columns:
     df_prog_filtered = df_prog_filtered[df_prog_filtered["site"].isin(site_sel)]
 if perusahaan_sel and "perusahaan" in df_prog_filtered.columns:
     df_prog_filtered = df_prog_filtered[df_prog_filtered["perusahaan"].isin(perusahaan_sel)]
+if jenis_sel and "jenis_sampah" in df_prog_filtered.columns:
+    df_prog_filtered = df_prog_filtered[df_prog_filtered["jenis_sampah"].isin(jenis_sel)]
+
+aktif = ", ".join(jenis_sel) if jenis_sel else "Semua"
+st.caption(f"🗑️ Filter Jenis Sampah aktif: **{aktif}**")
 
 # =============================
 # HITUNG JUMLAH HARI (berdasar pilihan sidebar)
@@ -225,37 +256,92 @@ if "kategori" in df_prog_unique.columns:
 else:
     jmlprog_pengurangan = jmlprog_pengelolaan = 0
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total Program", jumlah_program, "per Agustus 2025")
-col2.metric("Program Pengurangan", jmlprog_pengurangan, "(Reduce)")
-col3.metric("Program Pengelolaan", jmlprog_pengelolaan, "(Reuse & Recycle)")
-col4.metric("Periode Hari", f"{days_period} hari")
 
-# =============================
-# CLUSTER METRICS (dedup)
-# =============================
+# ==================================================
+# 💠 METRIC CARD SECTION (dua baris kotak)
+# ==================================================
+st.markdown("""
+<style>
+.metric-card {
+    border-radius: 12px;
+    padding: 15px;
+    text-align: center;
+    color: #fff;
+    font-family: 'Segoe UI', sans-serif;
+    box-shadow: 3px 3px 10px rgba(0,0,0,0.2);
+}
+.metric-card h3 {
+    font-size: 16px;
+    margin-bottom: 4px;
+}
+.metric-card h2 {
+    font-size: 32px;
+    margin: 0;
+    font-weight: bold;
+}
+.metric-sub {
+    font-size: 14px;
+    color: #f1f1f1;
+    margin-top: 4px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# --- Baris pertama: total program & kategori besar
+colA, colB, colC, colD = st.columns(4)
+with colA:
+    st.markdown(f"""
+    <div class="metric-card" style="background:#0077b6">
+        <h3>Total Program</h3>
+        <h2>{jumlah_program}</h2>
+        <div class="metric-sub">📅 per Agustus 2025</div>
+    </div>""", unsafe_allow_html=True)
+with colB:
+    st.markdown(f"""
+    <div class="metric-card" style="background:#2b9348">
+        <h3>Program Pengurangan</h3>
+        <h2>{jmlprog_pengurangan}</h2>
+        <div class="metric-sub">♻️ Reduce</div>
+    </div>""", unsafe_allow_html=True)
+with colC:
+    st.markdown(f"""
+    <div class="metric-card" style="background:#40916c">
+        <h3>Program Pengelolaan</h3>
+        <h2>{jmlprog_pengelolaan}</h2>
+        <div class="metric-sub">🔁 Reuse & Recycle</div>
+    </div>""", unsafe_allow_html=True)
+with colD:
+    st.markdown(f"""
+    <div class="metric-card" style="background:#ffb703">
+        <h3>Periode Hari</h3>
+        <h2>{days_period}</h2>
+        <div class="metric-sub">📆 hari aktif</div>
+    </div>""", unsafe_allow_html=True)
+
+# --- Baris kedua: cluster breakdown
 col1, col2, col3, col4, col5 = st.columns(5)
-for i, cluster in enumerate(["Maggot/BSF","Komposting","Bank Sampah","Reduce Plastik","Lainnya"]):
-    col = [col1,col2,col3,col4,col5][i]
-    if "cluster" in df_prog_unique.columns:
-        col.metric(cluster, df_prog_unique[df_prog_unique["cluster"]==cluster].shape[0])
-    else:
-        col.metric(cluster, 0)
+cluster_colors = {
+    "Maggot/BSF": "#184e77",
+    "Komposting": "#52b788",
+    "Bank Sampah": "#76c893",
+    "Reduce Plastik": "#95d5b2",
+    "Lainnya": "#adb5bd"
+}
+for col, cluster in zip([col1, col2, col3, col4, col5], cluster_colors.keys()):
+    jumlah = (
+        df_prog_unique[df_prog_unique["cluster"]==cluster].shape[0]
+        if "cluster" in df_prog_unique.columns else 0
+    )
+    st_color = cluster_colors[cluster]
+    col.markdown(f"""
+    <div class="metric-card" style="background:{st_color}">
+        <h3>{cluster}</h3>
+        <h2>{jumlah}</h2>
+    </div>""", unsafe_allow_html=True)
 
 # =============================
 # VISUALISASI
 # =============================
-
-# Sunburst (program unik)
-st.markdown("### 📊 Proporsi Program & Jenis Sampah")
-if not df_prog_unique.empty and {"cluster","jenis_sampah"}.issubset(df_prog_unique.columns):
-    df_sun = df_prog_unique.groupby(["cluster","jenis_sampah"], as_index=False).size()
-    df_sun.rename(columns={"size":"jumlah_program"}, inplace=True)
-    fig_sunburst = px.sunburst(
-        df_sun, path=["cluster","jenis_sampah"], values="jumlah_program",
-        color="cluster", color_discrete_map=color_map
-    )
-    st.plotly_chart(fig_sunburst, use_container_width=True)
 
 # Pie (program unik)
 st.markdown("### 🥧 Proporsi Program (Kategori & Jenis Sampah)")
@@ -267,6 +353,177 @@ if not df_prog_unique.empty and {"kategori","jenis_sampah"}.issubset(df_prog_uni
         color="jenis_sampah", color_discrete_map=color_map, hole=0.3
     )
     st.plotly_chart(fig_prop, use_container_width=True)
+
+# =============================
+# 🧩 SUB-JENIS SAMPAH 
+# =============================
+st.markdown("### 🧩 Analisis Sub-Jenis Sampah ")
+
+# Pastikan kolom sub_jenis_sampah ada, kalau tidak buat deteksi sederhana
+if "sub_jenis_sampah" not in df_prog_unique.columns:
+    def detect_subjenis(name):
+        name = str(name).lower()
+        if "plastik" in name: return "Plastik"
+        if "kardus" in name or "kertas" in name: return "Kertas/Kardus"
+        if "logam" in name or "besi" in name: return "Logam"
+        if "kaca" in name: return "Kaca"
+        if "daun" in name or "ranting" in name: return "Daun & Ranting"
+        if "sisa makanan" in name or "sayur" in name: return "Sisa Makanan"
+        return "Lainnya"
+    df_prog_unique["sub_jenis_sampah"] = df_prog_unique["nama_program"].map(detect_subjenis)
+
+# Buat agregasi jumlah program per jenis_sampah dan sub_jenis_sampah
+if {"jenis_sampah","sub_jenis_sampah"}.issubset(df_prog_unique.columns):
+    df_sub = (
+        df_prog_unique.groupby(["jenis_sampah","sub_jenis_sampah"], as_index=False)
+        .agg(jumlah_program=("nama_program","count"))
+    )
+
+    col1, col2 = st.columns([0.5,0.5])
+    with col1:
+        st.markdown("#### 📊 Proporsi Sub-Jenis per Jenis Sampah")
+        fig_subpie = px.sunburst(
+            df_sub,
+            path=["jenis_sampah","sub_jenis_sampah"],
+            values="jumlah_program",
+            color="jenis_sampah",
+            color_discrete_map=color_map
+        )
+        st.plotly_chart(fig_subpie, use_container_width=True)
+
+    with col2:
+        st.markdown("#### 📈 Jumlah Program per Sub-Jenis")
+        fig_subbar = px.bar(
+            df_sub,
+            x="sub_jenis_sampah",
+            y="jumlah_program",
+            color="jenis_sampah",
+            text="jumlah_program",
+            color_discrete_map=color_map,
+            barmode="group"
+        )
+        fig_subbar.update_traces(textposition="outside")
+        fig_subbar.update_layout(xaxis_title="", yaxis_title="Jumlah Program")
+        st.plotly_chart(fig_subbar, use_container_width=True)
+else:
+    st.warning("Kolom sub_jenis_sampah belum tersedia di dataset.")
+
+# ==================================================
+# ♻️ SUB-JENIS × KATEGORI PROGRAM (PENGURANGAN / PENGELOLAAN) — SIDE-BY-SIDE + GREEN THEME
+# ==================================================
+st.markdown("### ♻️ Sub-Jenis Sampah per Kategori Program (kg)")
+
+# pastikan kolom 'sub_jenis_sampah'
+if "sub_jenis_sampah" not in df_prog_filtered.columns:
+    def detect_subjenis(name):
+        name = str(name).lower()
+        if "plastik" in name: return "Plastik"
+        if "kardus" in name or "kertas" in name: return "Kertas/Kardus"
+        if "logam" in name or "besi" in name: return "Logam"
+        if "kaca" in name: return "Kaca"
+        if "daun" in name or "ranting" in name: return "Daun & Ranting"
+        if "sisa makanan" in name or "sayur" in name: return "Sisa Makanan"
+        return "Lainnya"
+    df_prog_filtered["sub_jenis_sampah"] = df_prog_filtered["nama_program"].map(detect_subjenis)
+
+# pastikan numeric
+if "total_calc" in df_prog_filtered.columns:
+    df_prog_filtered["total_calc"] = pd.to_numeric(df_prog_filtered["total_calc"], errors="coerce").fillna(0)
+else:
+    df_prog_filtered["total_calc"] = 0
+
+# agregasi Kategori × Sub-Jenis
+need_cols = {"kategori", "sub_jenis_sampah", "total_calc"}
+if need_cols.issubset(df_prog_filtered.columns):
+    df_kat_sub = (
+        df_prog_filtered
+        .groupby(["kategori", "sub_jenis_sampah"], as_index=False)["total_calc"]
+        .sum()
+        .rename(columns={"total_calc": "total_kg"})
+    ).sort_values(["kategori", "total_kg"], ascending=[True, False])
+
+    # ====== PALET HIJAU (bisa selaras tema / custom) ======
+    # gunakan 2 shade hijau berbeda untuk kategori
+    kategori_colors = {
+        "Program Pengurangan": "#2b9348",   # hijau sedang
+        "Program Pengelolaan": "#1b4332"    # hijau gelap
+    }
+    # fallback jika label kategori berbeda-beda casing
+    kategori_colors = {k.lower(): v for k, v in kategori_colors.items()}
+
+    # ====== LAYOUT BERSAMPINGAN ======
+    col_left, col_right = st.columns([0.56, 0.44])
+
+    # ---- BAR CHART (grouped) → perbandingan kategori di tiap Sub-Jenis
+    with col_left:
+        st.markdown("#### 📊 Perbandingan per Sub-Jenis")
+        # pastikan urutan sub-jenis descending by total
+        order_sub = (
+            df_kat_sub.groupby("sub_jenis_sampah", as_index=False)["total_kg"].sum()
+            .sort_values("total_kg", ascending=False)["sub_jenis_sampah"]
+            .tolist()
+        )
+        df_plot = df_kat_sub.copy()
+        df_plot["kategori_lc"] = df_plot["kategori"].astype(str).str.lower()
+
+        fig_bar = px.bar(
+            df_plot,
+            x="sub_jenis_sampah", y="total_kg",
+            color="kategori_lc", barmode="group", text="total_kg",
+            category_orders={"sub_jenis_sampah": order_sub},
+            color_discrete_map=kategori_colors,
+            labels={"sub_jenis_sampah":"Sub-Jenis Sampah", "total_kg":"Total Timbulan (kg)", "kategori_lc":"Kategori"}
+        )
+        fig_bar.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+        fig_bar.update_layout(
+            xaxis_title="",
+            yaxis_title="Total Timbulan (kg)",
+            margin=dict(t=40, b=90, l=40, r=20),
+            legend_title_text="Kategori Program",
+        )
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+    # ---- SUNBURST (Kategori → Sub-Jenis) → distribusi komposisi
+    with col_right:
+        st.markdown("#### 🌞 Komposisi (Kategori → Sub-Jenis)")
+        # gunakan warna kategori; node sub-jenis akan mengikuti
+        df_sun = df_kat_sub.rename(columns={"kategori": "Kategori", "sub_jenis_sampah": "Sub-Jenis"})
+        df_sun["Kategori_lc"] = df_sun["Kategori"].astype(str).str.lower()
+
+        # plotly sunburst pakai color=Kategori_lc agar warna konsisten
+        fig_sun = px.sunburst(
+            df_sun,
+            path=["Kategori", "Sub-Jenis"],
+            values="total_kg",
+            color="Kategori_lc",
+            color_discrete_map=kategori_colors,
+        )
+        fig_sun.update_layout(margin=dict(t=30, b=10, l=10, r=10))
+        st.plotly_chart(fig_sun, use_container_width=True)
+
+    # ---- TABEL RINGKASAN
+    with st.expander("📋 Tabel Ringkasan Kategori × Sub-Jenis (kg)"):
+        st.dataframe(
+            df_kat_sub.pivot_table(index="sub_jenis_sampah", columns="kategori", values="total_kg", aggfunc="sum")
+            .fillna(0)
+            .sort_values(by=list(df_kat_sub["kategori"].unique()), ascending=False)
+            .style.format("{:,.2f}"),
+            use_container_width=True
+        )
+
+else:
+    st.warning("⚠️ Kolom 'kategori' / 'sub_jenis_sampah' / 'total_calc' belum lengkap di dataset Program.")
+
+# Sunburst (program unik)
+st.markdown("### 📊 Proporsi Program & Jenis Sampah (Cluster)")
+if not df_prog_unique.empty and {"cluster","jenis_sampah"}.issubset(df_prog_unique.columns):
+    df_sun = df_prog_unique.groupby(["cluster","jenis_sampah"], as_index=False).size()
+    df_sun.rename(columns={"size":"jumlah_program"}, inplace=True)
+    fig_sunburst = px.sunburst(
+        df_sun, path=["cluster","jenis_sampah"], values="jumlah_program",
+        color="cluster", color_discrete_map=color_map
+    )
+    st.plotly_chart(fig_sunburst, use_container_width=True)
 
 # Line Trend Cluster (pakai nilai bulanan)
 st.markdown("### 📈 Tren Sampah per Cluster")
@@ -288,12 +545,11 @@ if not df_prog_unique.empty and {"jenis_sampah","cluster"}.issubset(df_prog_uniq
         "target":[mapping[t] for t in df_sankey["cluster"]],
         "value":df_sankey["jumlah_program"]
     }
-    node = {
-        "label":sources, "pad":20, "thickness":20,
-        "color":[color_map.get(l,"#66c2a5") for l in sources]
-    }
+    node = {"label":sources, "pad":20, "thickness":20,
+            "color":[color_map.get(l,"#66c2a5") for l in sources]}
     fig_sankey = go.Figure(go.Sankey(node=node, link=link))
     st.plotly_chart(fig_sankey, use_container_width=True)
+
 
 # Bar Distribusi Cluster (program unik)
 st.markdown("### 🏢 Distribusi Cluster Program per Perusahaan & Site")
@@ -425,6 +681,7 @@ with colC:
     st.markdown(f"<div class='card'><h3>Tidak Termanfaatkan</h3>"f"<h2 style='color:#d00000;'>{persen_tidak_terkelola:.1f}%</h2>"f"<p>{total_tidak_terkelola_all:,.2f} kg</p></div>",unsafe_allow_html=True)
 with colD:
     st.markdown(f"<div class='card'><h3>Reduce</h3><h2>{persen_reduce:.1f}%</h2><p>{total_reduce_all:,.2f} kg</p></div>", unsafe_allow_html=True)
+
 # ===============================
 # PLOT
 # ===============================
