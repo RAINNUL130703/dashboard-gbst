@@ -128,8 +128,8 @@ bulan_map = {"Januari":1,"Februari":2,"Maret":3,"April":4,"Mei":5,"Juni":6,
 tahun_tersedia = sorted(df_prog_long["tahun"].dropna().astype(int).unique().tolist())
 if not tahun_tersedia:
     # fallback: kalau tidak ada, coba dari ketidaksesuaian
-    if "tanggallapor" in df_ketidaksesuaian.columns:
-        tgl = pd.to_datetime(df_ketidaksesuaian["tanggallapor"], dayfirst=True, errors="coerce")
+    if "TanggalLapor" in df_ketidaksesuaian.columns:
+        tgl = pd.to_datetime(df_ketidaksesuaian["TanggalLapor"], dayfirst=True, errors="coerce")
         tahun_tersedia = sorted(tgl.dt.year.dropna().astype(int).unique().tolist())
 
 bulan_tersedia = list(bulan_map.keys())
@@ -158,10 +158,10 @@ def apply_program_filter(df_prog_long, tahun_pilihan, bulan_pilihan):
 
 def apply_ketidaksesuaian_filter(df_ket, tahun_pilihan, bulan_pilihan):
     d = df_ket.copy()
-    if "tanggallapor" in d.columns:
-        d["tanggallapor"] = pd.to_datetime(d["tanggallapor"], dayfirst=True, errors="coerce")
-        d["tahun"] = d["tanggallapor"].dt.year
-        d["bulan"] = d["tanggallapor"].dt.month
+    if "TanggalLapor" in d.columns:
+        d["TanggalLapor"] = pd.to_datetime(d["TanggalLapor"], dayfirst=True, errors="coerce")
+        d["tahun"] = d["TanggalLapor"].dt.year
+        d["bulan"] = d["TanggalLapor"].dt.month
         if tahun_pilihan:
             d = d[d["tahun"].isin(tahun_pilihan)]
         if bulan_pilihan:
@@ -221,10 +221,10 @@ with tab1:
         # ===============================
         # Total laporan (semua status) pakai filter site, perusahaan, tahun, bulan
         dk_all = apply_site_perusahaan_filter(df_ketidaksesuaian.copy())
-        if "tanggallapor" in dk_all.columns:
-            dk_all["tanggallapor"] = pd.to_datetime(dk_all["tanggallapor"], dayfirst=True, errors="coerce")
-            dk_all["tahun"] = dk_all["tanggallapor"].dt.year
-            dk_all["bulan"] = dk_all["tanggallapor"].dt.month
+        if "TanggalLapor" in dk_all.columns:
+            dk_all["TanggalLapor"] = pd.to_datetime(dk_all["TanggalLapor"], dayfirst=True, errors="coerce")
+            dk_all["tahun"] = dk_all["TanggalLapor"].dt.year
+            dk_all["bulan"] = dk_all["TanggalLapor"].dt.month
             if tahun_pilihan:
                 dk_all = dk_all[dk_all["tahun"].isin(tahun_pilihan)]
             if bulan_pilihan:
@@ -236,13 +236,59 @@ with tab1:
         # Jumlah valid sudah otomatis ada di df_ket_f
         total_valid = len(df_ket_f) if not df_ket_f.empty else 0
 
+
+        # === Helper: hitung Man Power unik ===
+        def total_manpower_unik(df):
+            if "man_power" not in df.columns:
+                return 0, pd.DataFrame()
+
+            d = df.copy()
+            d["man_power"] = pd.to_numeric(d["man_power"], errors="coerce")
+            d = d.dropna(subset=["man_power"])
+
+            # kunci deduplikasi
+            keys = [k for k in ["site", "perusahaan"] if k in d.columns]
+            if not keys:
+                # fallback: unik berdasarkan nilai man_power saja
+                d_uniq = d[["man_power"]].drop_duplicates()
+                total_mp = d_uniq["man_power"].sum()
+                # untuk tampilan per site, coba ambil site bila ada
+                if "site" in df.columns:
+                    mp_site = (
+                        d.drop_duplicates(subset=["site"], keep="last")[["site", "man_power"]]
+                        .rename(columns={"man_power": "mp_unik"})
+                    )
+                else:
+                    mp_site = pd.DataFrame()
+                return total_mp, mp_site
+
+            # unik per kombinasi kunci (mis. per site,perusahaan)
+            d_uniq = d.drop_duplicates(subset=keys, keep="last")
+            total_mp = d_uniq["man_power"].sum()
+
+            # agregasi untuk tampilan per site
+            if "site" in d_uniq.columns:
+                mp_site = (
+                    d_uniq.groupby("site", as_index=False)["man_power"].sum()
+                    .rename(columns={"man_power": "mp_unik"})
+                )
+            else:
+                mp_site = pd.DataFrame()
+
+            return total_mp, mp_site
+
+        total_mp_unik, mp_site_df = total_manpower_unik(df_timbulan_f)
+
+        # kg/hari/orang (sesuai SNI)
+        rata_timbulan_per_orang = (total_timbulan_hari / total_mp_unik) if total_mp_unik > 0 else 0.0
+
         # ---------- METRIC ----------
-        c1,c2,c3,c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Timbulan (kg)", fmt_num(total_timbulan_all))
         c2.metric("Rata-rata Timbulan (kg/hari)", fmt_num(total_timbulan_hari))
-        c3.metric("Jumlah Program", jumlah_program)
-        c4.metric("Ketidaksesuaian Valid", f"{total_valid} / {total_reports}")
-
+        c3.metric("Rata-rata Timbulan (kg/hari/orang)", f"{rata_timbulan_per_orang:.3f}")
+        c4.metric("Jumlah Program", jumlah_program)
+        c5.metric("Ketidaksesuaian Valid", f"{total_valid} / {total_reports}")
         # =====================================================
         # KARTU (Reduce, Pengolahan, Sisa) — PAKAI df_prog_f (melt) SESUAI FILTER
         # =====================================================
@@ -253,6 +299,11 @@ with tab1:
             df_prog_f["Value"] = pd.to_numeric(df_prog_f["Value"], errors="coerce").fillna(0)
             prog_pengolahan_per_hari = df_prog_f.loc[df_prog_f["kategori"]=="Program Pengelolaan","Value"].sum() / days_period
             prog_pengurangan_per_hari = df_prog_f.loc[df_prog_f["kategori"]=="Program Pengurangan","Value"].sum() / days_period
+            # --- tambahkan persentase reduce (tanpa mengubah logika lain) ---
+            persen_pengurangan = (
+                prog_pengurangan_per_hari / total_timbulan_hari * 100
+                if total_timbulan_hari > 0 else 0
+            )
 
         sisa_per_hari = max(total_timbulan_hari - prog_pengolahan_per_hari, 0)
         persen_pengolahan = (prog_pengolahan_per_hari/total_timbulan_hari*100) if total_timbulan_hari>0 else 0
@@ -271,7 +322,13 @@ with tab1:
 
         ca, cb, cc = st.columns(3)
         with ca:
-            st.markdown(f"<div class='card'><h3>Pengurangan Sampah (Reduce)</h3><h2>{fmt_num(prog_pengurangan_per_hari)}</h2><p>kg/hari</p></div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='card'><h3>Pengurangan Sampah (Reduce)</h3>"
+                f"<h2>{persen_pengurangan:.2f}%</h2>"
+                f"<p>{fmt_num(prog_pengurangan_per_hari)} kg/hari dari timbulan</p></div>",
+                unsafe_allow_html=True
+            )
+
         with cb:
             st.markdown(f"<div class='card'><h3>Pengolahan Sampah</h3><h2>{persen_pengolahan:.2f}%</h2><p>{fmt_num(prog_pengolahan_per_hari)} kg/hari dari timbulan</p></div>", unsafe_allow_html=True)
         with cc:
