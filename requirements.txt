@@ -3,6 +3,11 @@ pandas
 plotly
 wordcloud
 scikit-learn
+seaborn
+matplotlib
+regex
+numpy
+scipy
 folium
 streamlit-folium
 pyproj
