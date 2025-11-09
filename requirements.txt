@@ -8,6 +8,7 @@ matplotlib
 regex
 numpy
 scipy
+statsmodels
 folium
 streamlit-folium
 pyproj
