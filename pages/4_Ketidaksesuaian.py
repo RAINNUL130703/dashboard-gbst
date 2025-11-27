@@ -40,7 +40,7 @@ def norm_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 if "data" not in st.session_state:
-    sheet_names = ["Ketidaksesuaian", "Survei_Online", "Survei_Offline"]
+    sheet_names = ["Ketidaksesuaian", "Survei_Online", "Survei_Offline","Level_Jabatan"]
     data_dict = {}
     for sheet in sheet_names:
         try:
@@ -57,8 +57,32 @@ if "data" not in st.session_state:
 df = st.session_state["data"].get("Ketidaksesuaian", pd.DataFrame())
 df_online = st.session_state["data"].get("Survei_Online", pd.DataFrame())
 df_offline = st.session_state["data"].get("Survei_Offline", pd.DataFrame())
+df_level = st.session_state["data"].get("Level_Jabatan", pd.DataFrame())
 df_survey = pd.concat([df_online, df_offline], ignore_index=True)
 
+if not df_survey.empty and not df_level.empty:
+    merge_keys = [
+        k
+        for k in ["perusahaan_area_kerja_tambang", "site___lokasi_kerja", "id"]
+        if k in df_survey.columns and k in df_level.columns
+    ]
+
+    if merge_keys:
+        cols_level = merge_keys + [
+            c for c in ["Level_Jabatan"] if c in df_level.columns
+        ]
+        df_level_small = df_level[cols_level].drop_duplicates()
+
+        df_survey = df_survey.merge(
+            df_level_small,
+            on=merge_keys,
+            how="left",
+        )
+    else:
+        st.warning(
+            "Kolom kunci untuk menggabungkan Level Jabatan tidak lengkap. "
+            "Filter level jabatan tidak akan aktif."
+        )
 # ===============================
 # FILTER SIDEBAR
 # ===============================
@@ -723,27 +747,25 @@ if not df_survey.empty and not df.empty:
         # =========================================================
         # 🔧 FUNGSI: PLOT TREN KORELASI
         # =========================================================
-        def plot_tren_korelasi(df, var_x, var_y, mode="Baseline", scale_method="minmax"):
+        def plot_tren_korelasi(df_plot_in, var_x, var_y, mode="Baseline", scale_method="minmax"):
             import matplotlib.pyplot as plt
             import seaborn as sns
 
-            df_plot = df.copy()
+            df_plot = df_plot_in.copy()
 
-            # --- cari kolom perusahaan & site ---
             corp_col = next((c for c in df_plot.columns if "perusahaan" in c.lower() or "company" in c.lower()), None)
             site_col = next((c for c in df_plot.columns if "site" in c.lower() or "lokasi" in c.lower()), None)
 
-            # fallback ke variabel global jika tidak ketemu
-            if corp_col is None and "col_corp" in globals(): corp_col = col_corp
-            if site_col is None and "col_site" in globals(): site_col = col_site
+            if corp_col is None and "perusahaan" in df_plot.columns:
+                corp_col = "perusahaan"
+            if site_col is None and "site" in df_plot.columns:
+                site_col = "site"
 
-            # --- buat label X-axis ---
             if corp_col in df_plot.columns and site_col in df_plot.columns:
                 df_plot["corp_site_label"] = df_plot[corp_col].astype(str) + " - " + df_plot[site_col].astype(str)
             else:
-                df_plot["corp_site_label"] = df_plot.index.astype(str)  # fallback: index
+                df_plot["corp_site_label"] = df_plot.index.astype(str)
 
-            # --- standarisasi variabel X & Y ---
             if scale_method == "minmax":
                 range_min, range_max = (1, 5) if mode.lower() == "baseline" else (1, 4)
                 scaler = MinMaxScaler((range_min, range_max))
@@ -754,10 +776,8 @@ if not df_survey.empty and not df.empty:
             scaled = scaler.fit_transform(df_scaled)
             df_plot.loc[df_scaled.index, [f"{var_x}_scaled", f"{var_y}_scaled"]] = scaled
 
-            # --- baseline = mean X (scaled) ---
             baseline_val = df_plot[f"{var_x}_scaled"].mean()
 
-            # --- plotting ---
             df_plot = df_plot.sort_values(f"{var_y}_scaled", ascending=False)
             fig, ax = plt.subplots(figsize=(20, 10))
             ax.plot(df_plot["corp_site_label"], df_plot[f"{var_y}_scaled"],
@@ -765,7 +785,6 @@ if not df_survey.empty and not df.empty:
             ax.plot(df_plot["corp_site_label"], df_plot[f"{var_x}_scaled"],
                     color="red", marker="o", linestyle="dotted", linewidth=2, label=f"{var_x} (scaled)")
 
-            # --- garis baseline horizontal ---
             ax.axhline(y=baseline_val, color="green", linestyle="dotted", linewidth=1.5)
             ax.text(len(df_plot)-1, baseline_val + 0.1,
                     f"Baseline (mean X): {baseline_val:.2f}",
@@ -778,8 +797,7 @@ if not df_survey.empty and not df.empty:
             ax.set_title(f"📈 Tren {var_y} vs {var_x} ({mode})", fontsize=11, fontweight="bold")
             ax.grid(True, linestyle="--", alpha=0.5)
 
-            # --- Legend di bawah grafik ---
-            legend = ax.legend(
+            ax.legend(
                 loc="center left",
                 bbox_to_anchor=(1.02, 0.5),
                 borderaxespad=0,
@@ -789,20 +807,20 @@ if not df_survey.empty and not df.empty:
                 fontsize=8
             )
 
-            # --- Layout ---
             plt.subplots_adjust(right=0.78, bottom=0.25)
             st.pyplot(fig)
-           
 
-            st.caption(f"""
+            st.caption("""
             🔍 Interpretasi:
-            - Garis **biru**: pola nilai {var_y} setelah distandarisasi (1–5) untuk baseline dan (1-4) untuk individu.
-            - Garis **merah**: nilai {var_x} (independen).
+            - Garis **biru**: pola nilai variabel dependen setelah distandarisasi.
+            - Garis **merah**: nilai variabel independen.
             - Garis **hijau putus-putus**: baseline (rata-rata variabel X terstandarisasi).
             - Jika trennya berlawanan arah, indikasi korelasi negatif.
             """)
 
-
+        # ==============================
+        # PILIH SUMBER VARIABEL
+        # ==============================
         corr_source = st.radio(
             "Pilih sumber variabel untuk korelasi:",
             ("Baseline (df_corr + fraud metrics)", "Individu (df_survey + fraud context)"),
@@ -810,13 +828,53 @@ if not df_survey.empty and not df.empty:
         )
 
         # ==============================
-        # === SUMBER 1: BASELINE (FINAL) ===
+        # 🔽 FILTER LEVEL JABATAN (BARU, SETELAH RADIO)
+        # ==============================
+        df_survey_kor = df_survey.copy()
+        level_col = "level_jabatan"
+
+        if level_col in df_survey_kor.columns:
+            level_opts = sorted(df_survey_kor[level_col].dropna().unique().tolist())
+            level_sel = st.multiselect(
+                "Filter Level Jabatan (berlaku untuk analisis korelasi):",
+                level_opts,
+                default=level_opts,
+                key="filter_level_jabatan"
+            )
+            if level_sel:
+                df_survey_kor = df_survey_kor[df_survey_kor[level_col].isin(level_sel)]
+        else:
+            st.info("Kolom **Level Jabatan** tidak ditemukan di data survei, jadi filter ini tidak aktif.")
+
+        if df_survey_kor.empty:
+            st.warning("Data survei kosong setelah filter level jabatan. Ubah pilihan level jabatan.")
+            st.stop()
+
+        # ==============================
+        # === SUMBER 1: BASELINE ===
         # ==============================
         if "Baseline" in corr_source:
-            # --- Siapkan dataframe baseline ---
+            # bangun ulang baseline dari df_survey_kor (bukan df_survey penuh)
+            df_survey_kor[col_q2] = pd.to_numeric(df_survey_kor[col_q2], errors="coerce")
+
+            df_feedback_kor = (
+                df_survey_kor.groupby([col_corp, col_site])[col_q2]
+                .mean()
+                .reset_index()
+                .rename(columns={col_corp: "perusahaan", col_site: "site", col_q2: "feedback_q2"})
+            )
+
+            df_corr = (
+                df_feedback_kor
+                .merge(df_count, on=["perusahaan", "site"], how="left")
+                .merge(perilaku_count, on=["perusahaan", "site"], how="left")
+                .merge(nonperilaku_count, on=["perusahaan", "site"], how="left")
+                .fillna(0)
+            )
+
             df_for_corr = df_corr.copy()
 
-            # Ambil data fraud dari df (ketidaksesuaian utama)
+            # tambahkan ringkasan fraud
             if "ketidaksesuaian_scored" in st.session_state:
                 df_fraud_all = st.session_state["ketidaksesuaian_scored"]
                 fraud_summary = (
@@ -827,10 +885,8 @@ if not df_survey.empty and not df.empty:
                         fraud_decision_mode=('fraud_decision', lambda x: x.mode()[0] if not x.mode().empty else None)
                     ).reset_index()
                 )
-                # Gabungkan dengan df_corr_scaled
                 df_for_corr = df_for_corr.merge(fraud_summary, on=["perusahaan", "site"], how="left")
 
-                # Konversi kategori fraud_decision ke numerik agar bisa dikorelasikan
                 fraud_map = {
                     "Fraud: Duplikasi/Anomali": 3,
                     "Fraud: Status Tidak Didukung Bukti": 2,
@@ -842,26 +898,17 @@ if not df_survey.empty and not df.empty:
                 st.warning("⚠️ Data fraud belum tersedia di session_state.")
                 df_for_corr["jumlah_valid"] = df_for_corr["jumlah_fraud"] = df_for_corr["fraud_decision_code"] = 0
 
-            # ======================================================
-            # 📊 TAMBAHAN VARIABEL RASIO UNTUK ANALISIS YANG LEBIH FAIR
-            # ======================================================
+            # rasio tambahan
             if all(col in df_for_corr.columns for col in ["jumlah_valid", "jumlah_fraud", "jumlah_ketidaksesuaian"]):
-                # total laporan valid + fraud
                 df_for_corr["total_laporan"] = df_for_corr["jumlah_valid"] + df_for_corr["jumlah_fraud"]
-
-                # Rasio Fraud terhadap total laporan
                 df_for_corr["rasio_fraud"] = df_for_corr.apply(
                     lambda r: r["jumlah_fraud"] / r["total_laporan"] if r["total_laporan"] > 0 else 0,
                     axis=1
                 )
-
-                # Rasio Valid terhadap total laporan
                 df_for_corr["rasio_valid"] = df_for_corr.apply(
                     lambda r: r["jumlah_valid"] / r["total_laporan"] if r["total_laporan"] > 0 else 0,
                     axis=1
                 )
-
-                # Rasio Fraud Perilaku terhadap total perilaku
                 if "jumlah_perilaku" in df_for_corr.columns:
                     df_for_corr["rasio_fraud_perilaku"] = df_for_corr.apply(
                         lambda r: r["jumlah_fraud"] / r["jumlah_perilaku"] if r["jumlah_perilaku"] > 0 else 0,
@@ -869,10 +916,7 @@ if not df_survey.empty and not df.empty:
                     )
                 else:
                     df_for_corr["rasio_fraud_perilaku"] = 0
-            else:
-                st.warning("⚠️ Kolom fraud/valid tidak lengkap, rasio tidak dapat dihitung.")
 
-            # --- Pilihan variabel numerik yang diperluas ---
             numeric_cols_corr = [
                 "feedback_q2",
                 "jumlah_ketidaksesuaian",
@@ -887,9 +931,6 @@ if not df_survey.empty and not df.empty:
             ]
             numeric_cols_corr = [c for c in numeric_cols_corr if c in df_for_corr.columns]
 
-            # ======================================================
-            # 🔧 Pilih variabel & metode korelasi
-            # ======================================================
             st.markdown("### ⚙️ Pilihan Variabel (Baseline)")
             var_x = st.selectbox("Variabel X (independen):", numeric_cols_corr, key="base_x")
             var_y = st.selectbox("Variabel Y (dependen):", [v for v in numeric_cols_corr if v != var_x], key="base_y")
@@ -899,13 +940,11 @@ if not df_survey.empty and not df.empty:
                 key="baseline_method"
             )
 
-            # Hitung korelasi
             x = pd.to_numeric(df_for_corr[var_x], errors="coerce").dropna()
             y = pd.to_numeric(df_for_corr[var_y], errors="coerce").dropna()
             common_idx = x.index.intersection(y.index)
             x, y = x.loc[common_idx], y.loc[common_idx]
 
-            # Tentukan metode korelasi
             normal_x = stats.shapiro(x)[1] > 0.05 if len(x) >= 3 else False
             normal_y = stats.shapiro(y)[1] > 0.05 if len(y) >= 3 else False
             if force_method == "Spearman":
@@ -932,9 +971,6 @@ if not df_survey.empty and not df.empty:
             - Metode Korelasi **Spearman** digunakan pada data yang **tidak** berdistribusi normal. 
             """)
 
-            # ======================================================
-            # 📈 Scatter plot
-            # ======================================================
             fig, ax = plt.subplots(figsize=(6, 4))
             sns.scatterplot(x=x, y=y, ax=ax, color="#4C84FF")
             if method == "pearson":
@@ -944,21 +980,19 @@ if not df_survey.empty and not df.empty:
             ax.set_title(f"{method.title()} Correlation (Baseline): {var_x} vs {var_y}")
             st.pyplot(fig)
 
-            # --- grafik tren distandarisasi ---
             st.markdown("### 📊 Tren Variabel per Site/Perusahaan")
             plot_tren_korelasi(df_for_corr, var_x, var_y, mode="Baseline", scale_method="minmax")
 
         # ==============================
-        # === SUMBER 2: INDIVIDU (REVISI) ===
-        # ==============================
-        # ==============================
-        # === SUMBER 2: INDIVIDU (ADAPTIF KE df_survey) ===
+        # === SUMBER 2: INDIVIDU ===
         # ==============================
         else:
-            import regex as re
+            import regex as re_rx
             from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
-            df_for_corr = df_survey.copy()
+            df_for_corr = df_survey_kor.copy()
+            # (lanjutan blok INDIVIDU kamu yang lama, tapi ganti df_survey -> df_survey_kor,
+            # dan df_for_corr = df_survey_kor.copy() seperti di sini
 
             # ----------------------------------------------------------
             # 1️⃣ PILIH INDIKATOR
