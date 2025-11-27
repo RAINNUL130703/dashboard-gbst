@@ -147,6 +147,7 @@ def apply_site_perusahaan_filter(df, site_col="site", perusahaan_col="perusahaan
         d = d[d[perusahaan_col].isin(perusahaan_sel)]
     return d
 
+
 def apply_program_filter(df_prog_long, tahun_pilihan, bulan_pilihan):
     d = df_prog_long.copy()
     if "tahun" in d.columns and tahun_pilihan:
@@ -156,10 +157,13 @@ def apply_program_filter(df_prog_long, tahun_pilihan, bulan_pilihan):
     d = apply_site_perusahaan_filter(d)
     return d
 
+
 def apply_ketidaksesuaian_filter(df_ket, tahun_pilihan, bulan_pilihan):
     d = df_ket.copy()
     if "TanggalLapor" in d.columns:
-        d["TanggalLapor"] = pd.to_datetime(d["TanggalLapor"], dayfirst=True, errors="coerce")
+        d["TanggalLapor"] = pd.to_datetime(
+            d["TanggalLapor"], dayfirst=True, errors="coerce"
+        )
         d["tahun"] = d["TanggalLapor"].dt.year
         d["bulan"] = d["TanggalLapor"].dt.month
         if tahun_pilihan:
@@ -168,18 +172,71 @@ def apply_ketidaksesuaian_filter(df_ket, tahun_pilihan, bulan_pilihan):
             bulan_num = [bulan_map[b] for b in bulan_pilihan]
             d = d[d["bulan"].isin(bulan_num)]
     if "status_temuan" in d.columns:
-        d = d[d["status_temuan"].str.lower()=="valid"]
+        d = d[d["status_temuan"].str.lower() == "valid"]
     d = apply_site_perusahaan_filter(d)
     return d
 
+
+def apply_timbulan_filter(df_timbulan, tahun_pilihan):
+    d = df_timbulan.copy()
+    d = apply_site_perusahaan_filter(d)
+    if "tahun" in d.columns and tahun_pilihan:
+        d["tahun"] = pd.to_numeric(d["tahun"], errors="coerce")
+        d = d[d["tahun"].isin(tahun_pilihan)]
+    return d
+
+
+# === Helper: hitung Man Power unik ===
+def total_manpower_unik(df):
+    if "man_power" not in df.columns:
+        return 0, pd.DataFrame(), 0
+
+    d = df.copy()
+    d["man_power"] = pd.to_numeric(d["man_power"], errors="coerce").fillna(0)
+
+    # Kunci deduplikasi yang BENAR (harus sama dengan perhitungan SNI)
+    keys = ["site", "perusahaan"]
+    if "tahun" in d.columns:
+        keys.append("tahun")
+
+    # TOTAL manpower unik berdasarkan kombinasi site-perusahaan-tahun
+    d_uniq = d.drop_duplicates(subset=keys, keep="last")
+
+    total_mp = d_uniq["man_power"].sum()
+
+    # JUMLAH perusahaan-site unik (abaikan tahun)
+    if {"site", "perusahaan"}.issubset(d.columns):
+        jumlah_unit = (
+            d_uniq[["site", "perusahaan"]]
+            .drop_duplicates()
+            .shape[0]
+        )
+    else:
+        jumlah_unit = 0
+
+    # AGREGASI per site
+    if "site" in d_uniq.columns:
+        mp_site = (
+            d_uniq.groupby("site", as_index=False)["man_power"].sum()
+            .rename(columns={"man_power": "mp_unik"})
+        )
+    else:
+        mp_site = pd.DataFrame()
+
+    return total_mp, mp_site, jumlah_unit
+
+
 # apply semua filter
-df_timbulan_f   = apply_site_perusahaan_filter(df_timbulan)
+df_timbulan_f   = apply_timbulan_filter(df_timbulan, tahun_pilihan)
 df_prog_f       = apply_program_filter(df_prog_long, tahun_pilihan, bulan_pilihan)
 df_ket_f        = apply_ketidaksesuaian_filter(df_ketidaksesuaian, tahun_pilihan, bulan_pilihan)
 df_online_f     = apply_site_perusahaan_filter(df_online)
 df_offline_f    = apply_site_perusahaan_filter(df_offline)
 df_cctv_f       = apply_site_perusahaan_filter(df_cctv)
 df_koordinat_f  = apply_site_perusahaan_filter(df_koordinat)
+
+# total manpower unik SESUDAH df_timbulan_f ada
+total_mp_unik, mp_site_df, jumlah_unit = total_manpower_unik(df_timbulan_f)
 
 # =============================
 # DAYS PERIOD (ikut filter)
@@ -207,6 +264,36 @@ with tab1:
             total_timbulan_all  = pd.to_numeric(df_timbulan_f.get("data_input_total", 0), errors="coerce").sum()
         else:
             total_timbulan_hari = total_timbulan_all = 0
+        # ============================
+        # METRIC PEMBANDING (TAHUN SEBELUMNYA)
+        # ============================
+        # Kita pakai logika: jika user pilih 1 tahun, bandingkan dengan tahun sebelumnya.
+        prev_total_timbulan_all = None
+        prev_total_timbulan_hari = None
+        prev_rata_timbulan_per_orang = None
+
+        if len(tahun_pilihan) == 1:
+            current_year = tahun_pilihan[0]
+            prev_year = current_year - 1
+
+            # data timbulan tahun sebelumnya dengan filter site & perusahaan yang sama
+            df_timbulan_prev = apply_timbulan_filter(df_timbulan, [prev_year])
+            if "timbulan" in df_timbulan_prev.columns:
+                df_timbulan_prev["timbulan"] = pd.to_numeric(
+                    df_timbulan_prev["timbulan"].astype(str).str.replace(",", "."),
+                    errors="coerce"
+                )
+                prev_total_timbulan_hari = df_timbulan_prev["timbulan"].sum()
+                prev_total_timbulan_all = pd.to_numeric(
+                    df_timbulan_prev.get("data_input_total", 0),
+                    errors="coerce"
+                ).sum()
+
+                # hitung man power unik tahun sebelumnya (pakai helper yang sama)
+                total_mp_prev, mp_site_prev, jumlah_unit_prev = total_manpower_unik(df_timbulan_prev)
+                prev_rata_timbulan_per_orang = (
+                    prev_total_timbulan_hari / total_mp_prev if total_mp_prev > 0 else None
+                )
 
         # Jumlah program unik (bukan baris melt)
         if "nama_program" in df_prog_f.columns:
@@ -236,59 +323,82 @@ with tab1:
         # Jumlah valid sudah otomatis ada di df_ket_f
         total_valid = len(df_ket_f) if not df_ket_f.empty else 0
 
-
-        # === Helper: hitung Man Power unik ===
-        def total_manpower_unik(df):
-            if "man_power" not in df.columns:
-                return 0, pd.DataFrame()
-
-            d = df.copy()
-            d["man_power"] = pd.to_numeric(d["man_power"], errors="coerce")
-            d = d.dropna(subset=["man_power"])
-
-            # kunci deduplikasi
-            keys = [k for k in ["site", "perusahaan"] if k in d.columns]
-            if not keys:
-                # fallback: unik berdasarkan nilai man_power saja
-                d_uniq = d[["man_power"]].drop_duplicates()
-                total_mp = d_uniq["man_power"].sum()
-                # untuk tampilan per site, coba ambil site bila ada
-                if "site" in df.columns:
-                    mp_site = (
-                        d.drop_duplicates(subset=["site"], keep="last")[["site", "man_power"]]
-                        .rename(columns={"man_power": "mp_unik"})
-                    )
-                else:
-                    mp_site = pd.DataFrame()
-                return total_mp, mp_site
-
-            # unik per kombinasi kunci (mis. per site,perusahaan)
-            d_uniq = d.drop_duplicates(subset=keys, keep="last")
-            total_mp = d_uniq["man_power"].sum()
-
-            # agregasi untuk tampilan per site
-            if "site" in d_uniq.columns:
-                mp_site = (
-                    d_uniq.groupby("site", as_index=False)["man_power"].sum()
-                    .rename(columns={"man_power": "mp_unik"})
-                )
-            else:
-                mp_site = pd.DataFrame()
-
-            return total_mp, mp_site
-
-        total_mp_unik, mp_site_df = total_manpower_unik(df_timbulan_f)
-
         # kg/hari/orang (sesuai SNI)
         rata_timbulan_per_orang = (total_timbulan_hari / total_mp_unik) if total_mp_unik > 0 else 0.0
-
-        # ---------- METRIC ----------
+        
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Total Timbulan (kg)", fmt_num(total_timbulan_all))
-        c2.metric("Rata-rata Timbulan (kg/hari)", fmt_num(total_timbulan_hari))
-        c3.metric("Rata-rata Timbulan (kg/hari/orang)", f"{rata_timbulan_per_orang:.3f}")
-        c4.metric("Jumlah Program", jumlah_program)
-        c5.metric("Ketidaksesuaian Valid", f"{total_valid} / {total_reports}")
+
+        # --- Total Timbulan (kg) ---
+        if prev_total_timbulan_all is not None:
+            delta_total = total_timbulan_all - prev_total_timbulan_all
+            delta_text_total = f"{'+' if delta_total >= 0 else ''}{fmt_num(delta_total)} kg vs {prev_year}"
+        else:
+            delta_text_total = None
+
+        c1.metric(
+            "Total Timbulan (kg)",
+            fmt_num(total_timbulan_all),
+            delta=delta_text_total
+        )
+
+        # --- Rata-rata Timbulan (kg/hari) ---
+        if prev_total_timbulan_hari is not None:
+            # di sini aku pakai selisih total kg/hari nya, bukan dibagi hari lagi
+            delta_hari = total_timbulan_hari - prev_total_timbulan_hari
+            delta_text_hari = f"{'+' if delta_hari >= 0 else ''}{fmt_num(delta_hari)} kg/hari vs {prev_year}"
+        else:
+            delta_text_hari = None
+
+        c2.metric(
+            "Rata-rata Timbulan (kg/hari)",
+            fmt_num(total_timbulan_hari),
+            delta=delta_text_hari
+        )
+
+        # --- Rata-rata Timbulan (kg/hari/orang) ---
+        if prev_rata_timbulan_per_orang is not None:
+            delta_rata_orang = rata_timbulan_per_orang - prev_rata_timbulan_per_orang
+            delta_text_orang = f"{'+' if delta_rata_orang >= 0 else ''}{delta_rata_orang:.3f} kg/hari/orang vs {prev_year}"
+        else:
+            delta_text_orang = None
+
+        c3.metric(
+            "Rata-rata Timbulan (kg/hari/orang)",
+            f"{rata_timbulan_per_orang:.3f}",
+            delta=delta_text_orang
+        )
+
+        # --- Jumlah Program ---
+        # logika: kalau mau, bisa juga bandingkan jumlah program tahun ini vs prev_year
+        if len(tahun_pilihan) == 1:
+            df_prog_prev = apply_program_filter(df_prog_long, [prev_year], bulan_pilihan)
+            if "nama_program" in df_prog_prev.columns:
+                prev_jumlah_program = (
+                    df_prog_prev["nama_program"].astype(str).str.strip().replace({"": None}).dropna().nunique()
+                )
+            else:
+                prev_jumlah_program = None
+        else:
+            prev_jumlah_program = None
+
+        if prev_jumlah_program is not None:
+            delta_prog = jumlah_program - prev_jumlah_program
+            delta_text_prog = f"{'+' if delta_prog >= 0 else ''}{delta_prog} program vs {prev_year}"
+        else:
+            delta_text_prog = None
+
+        c4.metric("Jumlah Program", jumlah_program, delta=delta_text_prog)
+
+        # --- Ketidaksesuaian Valid ---
+        # Di sini lebih tricky: mau dibandingkan apa? total_valid, atau rasio valid/total?
+        # Untuk contoh, aku cuma tulis teks kecil tanpa hitung delta numerik.
+        ratio_valid = (total_valid / total_reports * 100) if total_reports > 0 else 0
+        c5.metric(
+            "Ketidaksesuaian Valid",
+            f"{total_valid} / {total_reports}",
+            delta=f"{ratio_valid:.1f}% valid"
+        )
+
         # =====================================================
         # KARTU (Reduce, Pengolahan, Sisa) — PAKAI df_prog_f (melt) SESUAI FILTER
         # =====================================================
