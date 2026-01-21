@@ -181,6 +181,229 @@ with col4:
 
 st.markdown("---")
 
+
+
+
+# ===============================
+# 📈 TREN JUMLAH LAPORAN PER BULAN (FRAUD + VALID)
+# ===============================
+st.subheader("📈 Tren Jumlah Laporan per Bulan (Fraud + Valid)")
+
+if "tanggallapor" in df.columns:
+    df_plot = df.copy()
+    df_plot["tanggallapor"] = pd.to_datetime(df_plot["tanggallapor"], errors="coerce")
+    df_plot = df_plot.dropna(subset=["tanggallapor"])
+
+    # normalisasi status biar aman
+    if "status_temuan" in df_plot.columns:
+        df_plot["status_temuan"] = df_plot["status_temuan"].astype(str).str.strip().str.title()
+    else:
+        df_plot["status_temuan"] = "Unknown"
+
+    df_plot["period_month"] = df_plot["tanggallapor"].dt.to_period("M").dt.to_timestamp()
+
+    # agregasi jumlah laporan per bulan & status
+    monthly = (
+        df_plot.groupby(["period_month", "status_temuan"])
+        .size()
+        .reset_index(name="jumlah")
+        .sort_values("period_month")
+    )
+
+    if monthly.empty:
+        st.info("Tidak ada data untuk membuat tren bulanan.")
+    else:
+        # opsi tampilan
+        mode_tren = st.radio(
+            "Tampilan tren bulanan:",
+            ["Total saja", "Komposisi Valid vs Fraud (stacked)"],
+            horizontal=True,
+            key="mode_tren_bulanan"
+        )
+
+        if mode_tren == "Total saja":
+            monthly_total = (
+                df_plot.groupby("period_month")
+                .size()
+                .reset_index(name="jumlah")
+                .sort_values("period_month")
+            )
+
+            fig_total = px.line(
+                monthly_total,
+                x="period_month",
+                y="jumlah",
+                markers=True,
+                template="plotly_white",
+                labels={"period_month": "Bulan", "jumlah": "Jumlah Laporan"}
+            )
+            fig_total.update_layout(height=350)
+            st.plotly_chart(fig_total, use_container_width=True)
+
+        else:
+            # stacked bar (valid+fraud per bulan)
+            fig_stack = px.bar(
+                monthly,
+                x="period_month",
+                y="jumlah",
+                color="status_temuan",
+                barmode="stack",
+                text="jumlah",
+                template="plotly_white",
+                labels={"period_month": "Bulan", "jumlah": "Jumlah Laporan", "status_temuan": "Status"}
+            )
+            fig_stack.update_traces(textposition="outside")
+            fig_stack.update_layout(height=420, xaxis_tickangle=-25)
+            st.plotly_chart(fig_stack, use_container_width=True)
+else:
+    st.warning("Kolom 'tanggallapor' tidak ditemukan, tren bulanan tidak bisa dibuat.")
+
+
+st.markdown("---")
+
+
+# ======================================================
+# 🏢 PERUSAHAAN–SITE: PERBANDINGAN FRAUD vs VALID PER BULAN
+# ======================================================
+st.subheader("🏢 Perbandingan Fraud vs Valid per Bulan (Perusahaan - Site)")
+
+needed_cols = {"tanggallapor", "perusahaan", "site", "status_temuan"}
+if not needed_cols.issubset(df.columns):
+    st.warning("Kolom wajib tidak lengkap (butuh: tanggallapor, perusahaan, site, status_temuan).")
+else:
+    df_comp = df.copy()
+    df_comp["tanggallapor"] = pd.to_datetime(df_comp["tanggallapor"], errors="coerce")
+    df_comp = df_comp.dropna(subset=["tanggallapor"])
+
+    df_comp["status_temuan"] = df_comp["status_temuan"].astype(str).str.strip().str.title()
+    df_comp = df_comp[df_comp["status_temuan"].isin(["Valid", "Fraud"])]
+
+    if df_comp.empty:
+        st.info("Tidak ada data Valid/Fraud untuk dibandingkan.")
+    else:
+        # buat label perusahaan-site
+        df_comp["company_site"] = (
+            df_comp["perusahaan"].astype(str).str.strip() + " - " +
+            df_comp["site"].astype(str).str.strip()
+        )
+        df_comp["period_month"] = df_comp["tanggallapor"].dt.to_period("M").dt.to_timestamp()
+
+        # agregasi jumlah laporan per company_site per bulan per status
+        agg = (
+            df_comp.groupby(["company_site", "period_month", "status_temuan"])
+            .size()
+            .reset_index(name="jumlah")
+            .sort_values(["company_site", "period_month"])
+        )
+
+        # selector: All atau salah satu dari 9 company-site
+        cs_opsi = sorted(df_comp["company_site"].dropna().unique().tolist())
+        cs_pilih = st.selectbox(
+            "Pilih Perusahaan - Site:",
+            ["All"] + cs_opsi,
+            index=0,
+            key="company_site_pilih_tren"
+        )
+
+        # ===== MODE ALL: 2 grafik berdampingan =====
+        if cs_pilih == "All":
+            c1, c2 = st.columns([0.5, 0.5])
+
+            # kiri: Fraud vs Valid per bulan (gabungan semua perusahaan-site)
+            with c1:
+                st.markdown(
+                    '<p style="text-align:center;font-weight:bold;">📊 Semua Perusahaan-Site (per Bulan)</p>',
+                    unsafe_allow_html=True
+                )
+
+                agg_all = (
+                    df_comp.groupby(["period_month", "status_temuan"])
+                    .size()
+                    .reset_index(name="jumlah")
+                    .sort_values("period_month")
+                )
+
+                fig_all = px.bar(
+                    agg_all,
+                    x="period_month",
+                    y="jumlah",
+                    color="status_temuan",
+                    barmode="group",
+                    text="jumlah",
+                    template="plotly_white",
+                    labels={"period_month": "Bulan", "jumlah": "Jumlah Laporan", "status_temuan": "Status"}
+                )
+                fig_all.update_traces(textposition="outside")
+                fig_all.update_layout(height=420, xaxis_tickangle=-25)
+                st.plotly_chart(fig_all, use_container_width=True)
+
+            # kanan: Fraud vs Valid per perusahaan-site (total semua bulan)
+            with c2:
+                st.markdown(
+                    '<p style="text-align:center;font-weight:bold;">📊 Semua Bulan (per Perusahaan-Site)</p>',
+                    unsafe_allow_html=True
+                )
+
+                agg_cs = (
+                    df_comp.groupby(["company_site", "status_temuan"])
+                    .size()
+                    .reset_index(name="jumlah")
+                    .sort_values("jumlah", ascending=False)
+                )
+
+                fig_cs = px.bar(
+                    agg_cs,
+                    y="company_site",
+                    x="jumlah",
+                    color="status_temuan",
+                    barmode="group",
+                    text="jumlah",
+                    template="plotly_white",
+                    orientation="h",
+                    labels={"company_site": "Perusahaan - Site", "jumlah": "Jumlah Laporan", "status_temuan": "Status"}
+                )
+                fig_cs.update_traces(textposition="outside")
+                fig_cs.update_layout(height=420, yaxis=dict(autorange="reversed"))
+                st.plotly_chart(fig_cs, use_container_width=True)
+
+        # ===== MODE 1 COMPANY-SITE: Fraud vs Valid per bulan =====
+        else:
+            df_one = agg[agg["company_site"] == cs_pilih].copy()
+
+            pivot = (
+                df_one.pivot_table(
+                    index="period_month",
+                    columns="status_temuan",
+                    values="jumlah",
+                    aggfunc="sum",
+                    fill_value=0
+                )
+                .reset_index()
+                .sort_values("period_month")
+            )
+
+            fig_one = go.Figure()
+            for stat in ["Valid", "Fraud"]:
+                if stat in pivot.columns:
+                    fig_one.add_trace(go.Bar(
+                        name=stat,
+                        x=pivot["period_month"],
+                        y=pivot[stat],
+                        text=pivot[stat],
+                        textposition="outside"
+                    ))
+
+            fig_one.update_layout(
+                barmode="group",
+                template="plotly_white",
+                height=450,
+                xaxis_title="Bulan",
+                yaxis_title="Jumlah Laporan",
+                title=f"Fraud vs Valid per Bulan — {cs_pilih}",
+            )
+            st.plotly_chart(fig_one, use_container_width=True)
+
+
 # ===============================
 # TREN WAKTU
 # ===============================
@@ -206,22 +429,90 @@ st.markdown("---")
 # ===============================
 # PROPORSI SUB-KETIDAKSESUAIAN
 # ===============================
+# ===============================
+# PROPORSI SUB-KETIDAKSESUAIAN (Valid)
+# Donut — paksa SEMUA label tampil (outside + leader line)
+# ===============================
 st.subheader("📊 Proporsi berdasarkan Sub-Ketidaksesuaian (Valid)")
+
 if "sub_ketidaksesuaian" in df_valid.columns:
-    sub_counts = df_valid["sub_ketidaksesuaian"].value_counts().reset_index()
-    sub_counts.columns = ["Sub Ketidaksesuaian", "Jumlah"]
-    fig = px.sunburst(
-        sub_counts,
-        path=["Sub Ketidaksesuaian"],
-        values="Jumlah",
-        color="Jumlah",
-        color_continuous_scale="Viridis"
+    import numpy as np
+
+    sub_counts = (
+        df_valid["sub_ketidaksesuaian"]
+        .fillna("Unknown")
+        .value_counts()
+        .reset_index()
     )
+    sub_counts.columns = ["Sub Ketidaksesuaian", "Jumlah"]
+    total = sub_counts["Jumlah"].sum()
+    sub_counts["Persen"] = sub_counts["Jumlah"] / total * 100
+
+    # Urutkan biar konsisten
+    sub_counts = sub_counts.sort_values("Jumlah", ascending=False).reset_index(drop=True)
+
+    # --- fungsi pendekin label biar gak tabrakan ---
+    def shorten(s, n=28):
+        s = str(s)
+        return s if len(s) <= n else s[:n-1] + "…"
+
+    # Label yang tampil (ringkas) -> semua outside
+    sub_counts["LabelShort"] = sub_counts["Sub Ketidaksesuaian"].map(lambda x: shorten(x, 30))
+    sub_counts["LabelText"] = (
+        sub_counts["LabelShort"] + "<br>" +
+        sub_counts["Persen"].round(2).astype(str) + "%"
+    )
+
+    # warna viridis konsisten
+    viridis = px.colors.sequential.Viridis
+    colors = (viridis * ((len(sub_counts) // len(viridis)) + 1))[:len(sub_counts)]
+    color_map = dict(zip(sub_counts["Sub Ketidaksesuaian"], colors))
+
+    fig = px.pie(
+        sub_counts,
+        names="Sub Ketidaksesuaian",
+        values="Jumlah",
+        hole=0.45,
+        color="Sub Ketidaksesuaian",
+        color_discrete_map=color_map
+    )
+
+    fig.update_traces(
+        # ✅ paksa semua label tampil di luar
+        text=sub_counts["LabelText"],
+        textinfo="text",
+        textposition="outside",
+        outsidetextfont=dict(size=12),
+        # bantu garis leader lebih jelas
+        pull=[0.02]*len(sub_counts),
+        # hover tetap lengkap (pakai nama asli)
+        hovertemplate=(
+            "<b>%{label}</b><br>"
+            "Jumlah: %{value} laporan<br>"
+            "Proporsi: %{percent}<extra></extra>"
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_white",
+        height=750,  # ✅ tinggiin biar label tidak tabrakan
+        margin=dict(t=10, b=10, l=40, r=200),  # ✅ kasih ruang kanan untuk label
+        showlegend=False
+    )
+
     st.plotly_chart(fig, use_container_width=True)
+
+    # Bonus: tabel full label supaya tidak ada info yang hilang
+    with st.expander("📋 Daftar lengkap (nama penuh + jumlah + proporsi)"):
+        show_tbl = sub_counts[["Sub Ketidaksesuaian", "Jumlah", "Persen"]].copy()
+        show_tbl["Persen"] = show_tbl["Persen"].round(3)
+        st.dataframe(show_tbl, hide_index=True, use_container_width=True)
+
 else:
     st.warning("Kolom 'sub_ketidaksesuaian' tidak ditemukan.")
 
 st.markdown("---")
+
 
 # ===============================
 # JUMLAH PER SITE
