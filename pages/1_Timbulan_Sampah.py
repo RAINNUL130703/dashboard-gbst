@@ -343,98 +343,346 @@ else:
     st.warning("Kolom 'Timbulan', 'Man Power', 'Site', atau 'Perusahaan' belum lengkap untuk perhitungan SNI.")
 
 
-# =============================
-# TOTAL TIMBULAN PER SITE/PERUSAHAAN
-# =============================
-total_timbulan = df_timbulan_filtered["Timbulan"].sum()
-jumlah_program = dt_program.shape[0]
-avg_perhari = dt_program["Total_calc"].sum() / days_period if days_period > 0 else 0
+# ======================================================
+# 📊 GRAFIK TIMBULAN: data_input_total (kg) vs Timbulan (kg/hari) vs kg/hari/manpower
+# ======================================================
+st.markdown("## 📊 Visualisasi Timbulan (3 metrik)")
 
-with st.container():
-    col1, col2 = st.columns([0.5, 0.5])
+needed_cols = {"Site", "Perusahaan", "Timbulan", "Man Power", "Tahun"}
+if df_timbulan_filtered.empty or not needed_cols.issubset(df_timbulan_filtered.columns):
+    st.warning(
+        "Data timbulan kosong atau kolom belum lengkap.\n"
+        "Kolom wajib: Site, Perusahaan, Tahun, Timbulan, Man Power."
+    )
+else:
+    # ----------------------------
+    # UI pilihan metrik
+    # ----------------------------
+    metric_mode = st.radio(
+        "Pilih metrik yang ditampilkan:",
+        ["data_input_total (kg)", "Timbulan (kg/hari)", "kg/hari/manpower"],
+        horizontal=True
+    )
 
-    # --- Total Timbulan per Site ---
-    with col1:
-        st.markdown('<p style="text-align: center;font-weight: bold;">📊 Total Timbulan per Site</p>',
-                    unsafe_allow_html=True)
-        if not df_timbulan_filtered.empty:
-            total_site_timbulan = df_timbulan_filtered.groupby("Site", as_index=False)["Timbulan"].sum()
-            manpower_unique = df_timbulan_filtered[["Site", "Perusahaan", "Man Power"]].drop_duplicates()
-            manpower_site = manpower_unique.groupby("Site", as_index=False)["Man Power"].sum()
-            total_site = total_site_timbulan.merge(manpower_site, on="Site", how="left")
+    df_base = df_timbulan_filtered.copy()
 
-            fig1 = px.bar(
-                total_site,
-                x="Site",
-                y="Timbulan",
-                text="Timbulan",
-                color="Timbulan",
-                color_continuous_scale=["#b7e4c7", "#52b788", "#1b4332"],
-                labels={"Timbulan": "Total Timbulan (kg)"},
-                template="plotly_white"
-            )
-            fig1.update_traces(
-                texttemplate="%{text:,.0f}",
-                textposition="outside",
-                hovertemplate="<b>Site:</b> %{x}<br>"
-                              "<b>Total Timbulan:</b> %{y:,.0f} kg<br>"
-                              "<b>Man Power:</b> %{customdata[0]:,.0f}<br><extra></extra>",
-                customdata=total_site[["Man Power"]].values
-            )
-            fig1.update_layout(height=400, width=800, margin=dict(t=50, b=100))
-            st.plotly_chart(fig1, use_container_width=True)
+    # Pastikan numeric
+    df_base["Tahun"] = pd.to_numeric(df_base["Tahun"], errors="coerce").astype("Int64")
+    df_base["Timbulan"] = pd.to_numeric(df_base["Timbulan"], errors="coerce").fillna(0)
+    df_base["Man Power"] = pd.to_numeric(df_base["Man Power"], errors="coerce").fillna(0)
 
-    # --- Timbulan per Perusahaan-Site ---
-    with col2:
-        st.markdown('<p style="text-align: center;font-weight: bold;">📊 Timbulan per Perusahaan - Site</p>',
-                    unsafe_allow_html=True)
-        if not df_timbulan_filtered.empty and "Perusahaan" in df_timbulan_filtered.columns:
-            total_perusahaan = df_timbulan_filtered.groupby(
-                ["Perusahaan", "Site"], as_index=False
-            )["Timbulan"].sum()
-            total_perusahaan["Perusahaan_Site"] = total_perusahaan["Perusahaan"] + " - " + total_perusahaan["Site"]
+    # data_input_total optional (kalau ada)
+    has_totalcol = "data_input_total" in df_base.columns
+    if has_totalcol:
+        df_base["data_input_total"] = pd.to_numeric(df_base["data_input_total"], errors="coerce").fillna(0)
 
-            manpower_unique = df_timbulan_filtered[["Site", "Perusahaan", "Man Power"]].drop_duplicates()
-            manpower_site_mitra = manpower_unique.groupby(
-                ["Site", "Perusahaan"], as_index=False
-            )["Man Power"].sum()
+    import plotly.graph_objects as go
 
-            total_manpower_perusahaan = total_perusahaan.merge(
-                manpower_site_mitra, on=["Site", "Perusahaan"], how="left"
-            )
+    # =========================
+    # Tahun dropdown + opsi All
+    # =========================
+    tahun_opsi = sorted([int(x) for x in df_base["Tahun"].dropna().unique().tolist()])
+    if not tahun_opsi:
+        st.warning("Tidak ada nilai Tahun yang valid.")
+    else:
+        opsi_tahun_ui = ["All"] + tahun_opsi
+        tahun_pilihan_ui = st.selectbox("Pilih Tahun untuk grafik:", opsi_tahun_ui, index=0)
 
-            fig1b = px.bar(
-                total_perusahaan,
-                y="Perusahaan_Site",
-                x="Timbulan",
-                text="Timbulan",
-                color="Timbulan",
-                color_continuous_scale=["#b7e4c7", "#52b788", "#1b4332"],
-                labels={"Timbulan": "Total Timbulan (kg)", "Perusahaan_Site": "Perusahaan - Site"},
-                template="plotly_white",
-                orientation="h"
-            )
-            fig1b.update_traces(
-                texttemplate="%{text:,.0f}",
-                textposition="outside",
-                hovertemplate="<b>Total Timbulan:</b> %{x:,.0f} kg<br>"
-                              "<b>Man Power:</b> %{customdata[1]:,.0f}<br><extra></extra>",
-                customdata=total_manpower_perusahaan[["Perusahaan", "Man Power"]].values
-            )
-            fig1b.update_layout(
-                height=400,
-                width=800,
-                margin=dict(t=50, b=50),
-                yaxis=dict(autorange="reversed"),
-                coloraxis_colorbar=dict(
-                    title=dict(text="Total Timbulan (kg/hari)", side="right", font=dict(size=10)),
-                    tickfont=dict(size=9),
-                    thickness=12,
-                    len=0.6,
-                    x=1.05
+        # ======================================================
+        # MODE ALL -> tampilkan perbandingan 2024 vs 2025 (grouped horizontal)
+        # ======================================================
+        if tahun_pilihan_ui == "All":
+            years_available = sorted([int(x) for x in df_base["Tahun"].dropna().unique().tolist()])
+            years_target = [y for y in [2024, 2025] if y in years_available]
+
+            if len(years_target) < 2:
+                st.warning("Mode All membutuhkan data minimal tahun 2024 dan 2025.")
+            else:
+                import plotly.graph_objects as go
+
+                year_colors = {2024: "red", 2025: "green"}
+
+                # ambil data 2024 & 2025
+                df_c = df_base[df_base["Tahun"].isin(years_target)].copy()
+                df_c["Tahun"] = pd.to_numeric(df_c["Tahun"], errors="coerce").astype(int)
+                df_c["Timbulan"] = pd.to_numeric(df_c["Timbulan"], errors="coerce").fillna(0)
+                df_c["Man Power"] = pd.to_numeric(df_c["Man Power"], errors="coerce").fillna(0)
+
+                # data_input_total optional
+                if has_totalcol:
+                    df_c["data_input_total"] = pd.to_numeric(df_c["data_input_total"], errors="coerce").fillna(0)
+
+                # tentukan metrik sesuai metric_mode
+                if metric_mode == "data_input_total (kg)":
+                    if not has_totalcol:
+                        st.warning("Kolom 'data_input_total' tidak ditemukan, jadi mode ini tidak bisa dibandingkan.")
+                        st.stop()
+                    value_kind = "KG"
+                    x_title = "data_input_total (kg)"
+                    decimals = 0
+                elif metric_mode == "Timbulan (kg/hari)":
+                    value_kind = "KGDAY"
+                    x_title = "Timbulan (kg/hari)"
+                    decimals = 2
+                else:
+                    value_kind = "KGDAY_per_MP"
+                    x_title = "kg/hari/manpower"
+                    decimals = 4
+
+                uniq_cols = ["Site", "Perusahaan", "Tahun"]
+
+                # =========================
+                # A) PERBANDINGAN PER SITE
+                # =========================
+                site_kgday_y = (
+                    df_c.groupby(["Site", "Tahun"], as_index=False)["Timbulan"]
+                    .sum().rename(columns={"Timbulan": "KGDAY"})
                 )
+                site_mp_y = (
+                    df_c[uniq_cols + ["Man Power"]]
+                    .drop_duplicates(subset=uniq_cols, keep="last")
+                    .groupby(["Site", "Tahun"], as_index=False)["Man Power"]
+                    .sum().rename(columns={"Man Power": "MP"})
+                )
+
+                site_comp = site_kgday_y.merge(site_mp_y, on=["Site", "Tahun"], how="left")
+                site_comp["MP"] = site_comp["MP"].fillna(0)
+
+                if has_totalcol:
+                    site_kg_y = (
+                        df_c.groupby(["Site", "Tahun"], as_index=False)["data_input_total"]
+                        .sum().rename(columns={"data_input_total": "KG"})
+                    )
+                    site_comp = site_comp.merge(site_kg_y, on=["Site", "Tahun"], how="left")
+                else:
+                    site_comp["KG"] = 0
+
+                site_comp["KGDAY_per_MP"] = np.where(site_comp["MP"] > 0, site_comp["KGDAY"] / site_comp["MP"], 0)
+                site_comp["Value"] = site_comp[value_kind]
+
+                cat_order_site = (
+                    site_comp.groupby("Site")["Value"].sum()
+                    .sort_values(ascending=True)
+                    .index.tolist()
+                )
+
+                fig_site_cmp = go.Figure()
+                for yr in years_target:
+                    df_y = site_comp[site_comp["Tahun"] == yr].set_index("Site").reindex(cat_order_site).reset_index()
+                    df_y["Value"] = df_y["Value"].fillna(0)
+
+                    fig_site_cmp.add_trace(go.Bar(
+                        name=str(yr),
+                        y=df_y["Site"],
+                        x=df_y["Value"],
+                        orientation="h",
+                        marker_color=year_colors.get(yr, "gray"),
+                        text=[f"{v:,.{decimals}f}" for v in df_y["Value"]],
+                        textposition="outside",
+                        cliponaxis=False
+                    ))
+
+                fig_site_cmp.update_layout(
+                    barmode="group",
+                    template="plotly_white",
+                    height=520,
+                    xaxis_title=x_title,
+                    yaxis_title="Site",
+                    legend_title="Tahun",
+                    margin=dict(t=40, b=40, l=90, r=20),
+                )
+                fig_site_cmp.update_yaxes(categoryorder="array", categoryarray=cat_order_site)
+
+                # ======================================
+                # B) PERBANDINGAN PER PERUSAHAAN - SITE
+                # ======================================
+                ps_kgday_y = (
+                    df_c.groupby(["Perusahaan", "Site", "Tahun"], as_index=False)["Timbulan"]
+                    .sum().rename(columns={"Timbulan": "KGDAY"})
+                )
+                ps_mp_y = (
+                    df_c[uniq_cols + ["Man Power"]]
+                    .drop_duplicates(subset=uniq_cols, keep="last")
+                    .groupby(["Perusahaan", "Site", "Tahun"], as_index=False)["Man Power"]
+                    .sum().rename(columns={"Man Power": "MP"})
+                )
+
+                ps_comp = ps_kgday_y.merge(ps_mp_y, on=["Perusahaan", "Site", "Tahun"], how="left")
+                ps_comp["MP"] = ps_comp["MP"].fillna(0)
+
+                if has_totalcol:
+                    ps_kg_y = (
+                        df_c.groupby(["Perusahaan", "Site", "Tahun"], as_index=False)["data_input_total"]
+                        .sum().rename(columns={"data_input_total": "KG"})
+                    )
+                    ps_comp = ps_comp.merge(ps_kg_y, on=["Perusahaan", "Site", "Tahun"], how="left")
+                else:
+                    ps_comp["KG"] = 0
+
+                ps_comp["KGDAY_per_MP"] = np.where(ps_comp["MP"] > 0, ps_comp["KGDAY"] / ps_comp["MP"], 0)
+                ps_comp["Value"] = ps_comp[value_kind]
+                ps_comp["Perusahaan_Site"] = ps_comp["Perusahaan"].astype(str) + " - " + ps_comp["Site"].astype(str)
+
+                cat_order_ps = (
+                    ps_comp.groupby("Perusahaan_Site")["Value"].sum()
+                    .sort_values(ascending=True)
+                    .index.tolist()
+                )
+
+                fig_ps_cmp = go.Figure()
+                for yr in years_target:
+                    df_y = ps_comp[ps_comp["Tahun"] == yr].set_index("Perusahaan_Site").reindex(cat_order_ps).reset_index()
+                    df_y["Value"] = df_y["Value"].fillna(0)
+
+                    fig_ps_cmp.add_trace(go.Bar(
+                        name=str(yr),
+                        y=df_y["Perusahaan_Site"],
+                        x=df_y["Value"],
+                        orientation="h",
+                        marker_color=year_colors.get(yr, "gray"),
+                        text=[f"{v:,.{decimals}f}" for v in df_y["Value"]],
+                        textposition="outside",
+                        cliponaxis=False
+                    ))
+
+                fig_ps_cmp.update_layout(
+                    barmode="group",
+                    template="plotly_white",
+                    height=520,
+                    xaxis_title=x_title,
+                    yaxis_title="Perusahaan - Site",
+                    legend_title="Tahun",
+                    margin=dict(t=40, b=40, l=140, r=20),
+                )
+                fig_ps_cmp.update_yaxes(categoryorder="array", categoryarray=cat_order_ps)
+
+                # =========================
+                # TAMPILKAN BERDAMPINGAN
+                # =========================
+                c1, c2 = st.columns([0.5, 0.5])
+
+                with c1:
+                    st.markdown('<p style="text-align:center;font-weight:bold;">📊 Perbandingan per Site (2024 vs 2025)</p>',
+                                unsafe_allow_html=True)
+                    st.plotly_chart(fig_site_cmp, use_container_width=True)
+
+                with c2:
+                    st.markdown('<p style="text-align:center;font-weight:bold;">📊 Perbandingan per Perusahaan - Site (2024 vs 2025)</p>',
+                                unsafe_allow_html=True)
+                    st.plotly_chart(fig_ps_cmp, use_container_width=True)
+
+
+        # ======================================================
+        # MODE 1 TAHUN -> tampilkan grafik lama (2 kolom) seperti yang sudah berhasil
+        # ======================================================
+        else:
+            tahun_chart = int(tahun_pilihan_ui)
+            df_y = df_base[df_base["Tahun"] == tahun_chart].copy()
+
+            # ======================================================
+            # 1) Manpower UNIK (anti double count)
+            # ======================================================
+            uniq_cols = ["Site", "Perusahaan", "Tahun"]
+            mp_uniq = (
+                df_y[uniq_cols + ["Man Power"]]
+                .drop_duplicates(subset=uniq_cols, keep="last")
+                .groupby(["Site"], as_index=False)["Man Power"].sum()
+                .rename(columns={"Man Power": "MP_Site"})
             )
-            st.plotly_chart(fig1b, use_container_width=True)
+
+            mp_uniq_ps = (
+                df_y[uniq_cols + ["Man Power"]]
+                .drop_duplicates(subset=uniq_cols, keep="last")
+                .groupby(["Perusahaan", "Site"], as_index=False)["Man Power"].sum()
+                .rename(columns={"Man Power": "MP_PS"})
+            )
+
+            # ======================================================
+            # 2) Agregasi metrik dasar
+            # ======================================================
+            site_kgday = df_y.groupby("Site", as_index=False)["Timbulan"].sum().rename(columns={"Timbulan": "KGDAY_Site"})
+            ps_kgday = df_y.groupby(["Perusahaan", "Site"], as_index=False)["Timbulan"].sum().rename(columns={"Timbulan": "KGDAY_PS"})
+
+            if has_totalcol:
+                site_kg = df_y.groupby("Site", as_index=False)["data_input_total"].sum().rename(columns={"data_input_total": "KG_Site"})
+                ps_kg = df_y.groupby(["Perusahaan", "Site"], as_index=False)["data_input_total"].sum().rename(columns={"data_input_total": "KG_PS"})
+            else:
+                site_kg = site_kgday[["Site"]].copy()
+                site_kg["KG_Site"] = 0
+                ps_kg = ps_kgday[["Perusahaan", "Site"]].copy()
+                ps_kg["KG_PS"] = 0
+
+            site_plot = site_kgday.merge(site_kg, on="Site", how="left").merge(mp_uniq, on="Site", how="left")
+            site_plot["MP_Site"] = site_plot["MP_Site"].fillna(0)
+            site_plot["KGDAY_per_MP"] = np.where(site_plot["MP_Site"] > 0, site_plot["KGDAY_Site"] / site_plot["MP_Site"], 0)
+
+            ps_plot = ps_kgday.merge(ps_kg, on=["Perusahaan", "Site"], how="left").merge(mp_uniq_ps, on=["Perusahaan", "Site"], how="left")
+            ps_plot["MP_PS"] = ps_plot["MP_PS"].fillna(0)
+            ps_plot["Perusahaan_Site"] = ps_plot["Perusahaan"].astype(str) + " - " + ps_plot["Site"].astype(str)
+            ps_plot["KGDAY_per_MP"] = np.where(ps_plot["MP_PS"] > 0, ps_plot["KGDAY_PS"] / ps_plot["MP_PS"], 0)
+
+            # ======================================================
+            # 3) Pilih Y sesuai metric_mode
+            # ======================================================
+            if metric_mode == "data_input_total (kg)":
+                y_site = "KG_Site"
+                y_ps = "KG_PS"
+                y_title = "data_input_total (kg)"
+                text_fmt = "%{text:,.0f}"
+            elif metric_mode == "Timbulan (kg/hari)":
+                y_site = "KGDAY_Site"
+                y_ps = "KGDAY_PS"
+                y_title = "Timbulan (kg/hari)"
+                text_fmt = "%{text:,.2f}"
+            else:
+                y_site = "KGDAY_per_MP"
+                y_ps = "KGDAY_per_MP"
+                y_title = "kg/hari/manpower"
+                text_fmt = "%{text:,.4f}"
+
+            # ======================================================
+            # 4) Plot dua grafik (versi lama kamu)
+            # ======================================================
+            c1, c2 = st.columns([0.5, 0.5])
+
+            with c1:
+                st.markdown(f'<p style="text-align:center;font-weight:bold;">📊 Per Site ({tahun_chart})</p>',
+                            unsafe_allow_html=True)
+                site_plot = site_plot.sort_values(y_site, ascending=False)
+
+                fig_site = px.bar(
+                    site_plot,
+                    x="Site",
+                    y=y_site,
+                    text=y_site,
+                    color=y_site,
+                    labels={y_site: y_title},
+                    template="plotly_white"
+                )
+                fig_site.update_traces(texttemplate=text_fmt, textposition="outside")
+                fig_site.update_layout(height=420, margin=dict(t=40, b=90))
+                st.plotly_chart(fig_site, use_container_width=True)
+
+            with c2:
+                st.markdown(f'<p style="text-align:center;font-weight:bold;">📊 Per Perusahaan - Site ({tahun_chart})</p>',
+                            unsafe_allow_html=True)
+                ps_plot = ps_plot.sort_values(y_ps, ascending=True)
+
+                fig_ps = px.bar(
+                    ps_plot,
+                    y="Perusahaan_Site",
+                    x=y_ps,
+                    text=y_ps,
+                    color=y_ps,
+                    labels={y_ps: y_title, "Perusahaan_Site": "Perusahaan - Site"},
+                    template="plotly_white",
+                    orientation="h"
+                )
+                fig_ps.update_traces(texttemplate=text_fmt, textposition="outside")
+                fig_ps.update_layout(height=420, margin=dict(t=40, b=40), yaxis=dict(autorange="reversed"))
+                st.plotly_chart(fig_ps, use_container_width=True)
+
+
 
 # ===========================
 # FILTER ORGANIK / ANORGANIK
@@ -586,6 +834,442 @@ if not df_timbulan_filtered.empty and "jenis_timbulan" in df_timbulan_filtered.c
                 )
             )
             st.plotly_chart(fig4, use_container_width=True)
+
+st.markdown("### 📈 Tren Timbulan per Jenis Timbulan (Tahunan)")
+
+df_tren = df_filterjensampah.copy()
+
+if "Tahun" not in df_tren.columns:
+    st.warning("Kolom 'Tahun' tidak ditemukan di data timbulan, jadi tren tahunan tidak bisa dibuat.")
+else:
+    df_tren["Timbulan"] = pd.to_numeric(df_tren["Timbulan"], errors="coerce").fillna(0)
+
+    # pilih semua jenis by default
+    jenis_opsi = sorted(df_tren["jenis_timbulan"].dropna().unique().tolist())
+    jenis_pilih = st.multiselect(
+        "Pilih jenis timbulan yang ditampilkan",
+        options=jenis_opsi,
+        default=jenis_opsi
+    )
+
+    df_tren = df_tren[df_tren["jenis_timbulan"].isin(jenis_pilih)]
+
+    tren_agg = (
+        df_tren.groupby(["Tahun", "jenis_timbulan"], as_index=False)["Timbulan"]
+        .sum()
+        .sort_values("Tahun")
+    )
+
+    fig_tren = px.line(
+        tren_agg,
+        x="Tahun",
+        y="Timbulan",
+        color="jenis_timbulan",
+        markers=True,
+        template="plotly_white",
+        labels={"Tahun": "Tahun", "Timbulan": "Total Timbulan (kg)"}
+    )
+    fig_tren.update_layout(
+        height=450,
+        legend=dict(orientation="h", y=1.15, x=0)
+    )
+    st.plotly_chart(fig_tren, use_container_width=True)
+
+# ======================================================
+# 📊 TIMBULAN BERDASARKAN JENIS TIMBULAN (ALL vs per Tahun)
+# ======================================================
+st.markdown("## 📊 Timbulan Berdasarkan Jenis Timbulan")
+
+needed_cols = {"jenis_timbulan", "Timbulan", "Man Power", "Tahun", "Site", "Perusahaan"}
+if df_timbulan_filtered.empty or not needed_cols.issubset(df_timbulan_filtered.columns):
+    st.warning(
+        "Data belum lengkap untuk grafik jenis timbulan.\n"
+        "Kolom wajib: jenis_timbulan, Timbulan (kg/hari), Man Power, Tahun, Site, Perusahaan."
+    )
+else:
+    import numpy as np
+
+    metric_mode = st.radio(
+        "Pilih metrik:",
+        ["Timbulan (kg/hari)", "Timbulan (kg/hari/orang)"],
+        horizontal=True,
+        key="jenis_metric_v2"
+    )
+
+    dfj = df_timbulan_filtered.copy()
+    dfj["Tahun"] = pd.to_numeric(dfj["Tahun"], errors="coerce").astype("Int64")
+    dfj["Timbulan"] = pd.to_numeric(dfj["Timbulan"], errors="coerce").fillna(0)
+    dfj["Man Power"] = pd.to_numeric(dfj["Man Power"], errors="coerce").fillna(0)
+
+    tahun_opsi = sorted([int(x) for x in dfj["Tahun"].dropna().unique().tolist()])
+    tahun_pilih = st.selectbox(
+        "Pilih Tahun:",
+        ["All"] + tahun_opsi,
+        key="jenis_tahun_v2"
+    )
+
+    # -----------------------------------------
+    # Helper: hitung agregat per Tahun x Jenis
+    # -----------------------------------------
+    def build_jenis_by_year(dfin: pd.DataFrame) -> pd.DataFrame:
+        # manpower unik: Site-Perusahaan-Tahun (agar tidak double count)
+        mp_uniq = (
+            dfin[["Site", "Perusahaan", "Tahun", "Man Power"]]
+            .drop_duplicates(subset=["Site", "Perusahaan", "Tahun"], keep="last")
+            .groupby("Tahun", as_index=False)["Man Power"].sum()
+            .rename(columns={"Man Power": "MP_Tahun"})
+        )
+
+        jenis_kgday = (
+            dfin.groupby(["Tahun", "jenis_timbulan"], as_index=False)["Timbulan"]
+            .sum()
+            .rename(columns={"Timbulan": "KGDAY"})
+        )
+
+        out = jenis_kgday.merge(mp_uniq, on="Tahun", how="left")
+        out["MP_Tahun"] = out["MP_Tahun"].fillna(0)
+        out["KGDAY_per_MP"] = np.where(out["MP_Tahun"] > 0, out["KGDAY"] / out["MP_Tahun"], 0)
+        return out
+
+    # -----------------------------------------
+    # Data sesuai pilihan tahun
+    # -----------------------------------------
+    if tahun_pilih != "All":
+        df_plot = dfj[dfj["Tahun"] == int(tahun_pilih)].copy()
+        agg = build_jenis_by_year(df_plot)
+        agg = agg[agg["Tahun"] == int(tahun_pilih)].copy()
+    else:
+        agg = build_jenis_by_year(dfj)
+
+    # pilih metrik
+    if metric_mode == "Timbulan (kg/hari)":
+        ycol = "KGDAY"
+        ylab = "Timbulan (kg/hari)"
+        tfmt = "%{text:,.2f}"
+    else:
+        ycol = "KGDAY_per_MP"
+        ylab = "Timbulan (kg/hari/orang)"
+        tfmt = "%{text:,.4f}"
+
+    # urutan jenis konsisten
+    order_jenis = (
+        agg.groupby("jenis_timbulan")[ycol].sum()
+        .sort_values(ascending=False)
+        .index.tolist()
+    )
+
+    # -----------------------------------------
+    # Plot
+    # - jika All: grouped bar 2024 vs 2025
+    # -----------------------------------------
+    if tahun_pilih == "All":
+        # Warna fixed
+        color_map_year = {2024: "#E74C3C", 2025: "#2ECC71"}  # merah, hijau
+
+        # Pastikan cuma tahun yang ada
+        tahun_ada = sorted([int(x) for x in agg["Tahun"].dropna().unique().tolist()])
+        agg_all = agg[agg["Tahun"].isin(tahun_ada)].copy()
+
+        # Urutan jenis (besar di atas/bawah sesuai kebutuhan)
+        order_jenis_h = (
+            agg_all.groupby("jenis_timbulan")[ycol].sum()
+            .sort_values(ascending=True)   # yg besar di bawah (enak untuk horizontal)
+            .index.tolist()
+        )
+
+        fig = px.bar(
+            agg_all,
+            y="jenis_timbulan",
+            x=ycol,
+            color="Tahun",
+            barmode="group",
+            orientation="h",
+            category_orders={"jenis_timbulan": order_jenis_h},
+            labels={ycol: ylab, "jenis_timbulan": "Jenis Timbulan"},
+            template="plotly_white",
+            color_discrete_map=color_map_year
+        )
+
+        # Label angka di ujung bar
+        fig.update_traces(
+            text=agg_all[ycol],
+            texttemplate=tfmt,
+            textposition="outside",
+            cliponaxis=False
+        )
+
+        # Supaya angka tidak kepotong
+        mx = float(agg_all[ycol].max()) if len(agg_all) else 0
+        fig.update_xaxes(range=[0, mx * 1.25] if mx > 0 else None)
+
+        fig.update_layout(
+            title="Perbandingan 2024 vs 2025 (All)",
+            height=520,
+            margin=dict(t=60, b=40, l=170, r=80),
+            legend=dict(orientation="h", y=1.12, x=0),
+            yaxis=dict(autorange="reversed")
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+
+
+    else:
+        # Single year
+        agg = agg.sort_values(ycol, ascending=False)
+
+        fig = px.bar(
+            agg,
+            x="jenis_timbulan",
+            y=ycol,
+            text=ycol,
+            color=ycol,
+            category_orders={"jenis_timbulan": order_jenis},
+            labels={ycol: ylab, "jenis_timbulan": "Jenis Timbulan"},
+            template="plotly_white"
+        )
+        fig.update_traces(texttemplate=tfmt, textposition="outside", cliponaxis=False)
+        fig.update_layout(height=520, margin=dict(t=40, b=120))
+        fig.update_xaxes(tickangle=-30)
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    with st.expander("🔍 Audit perhitungan (Jenis x Tahun)"):
+        st.dataframe(
+            agg[["Tahun", "jenis_timbulan", "KGDAY", "MP_Tahun", "KGDAY_per_MP"]],
+            hide_index=True,
+            use_container_width=True
+        )
+
+# ======================================================
+# 🧩 JENIS TIMBULAN per PERUSAHAAN–SITE (All / per PS) + Tahun (All / per Tahun)
+# ======================================================
+st.markdown("## 🧩 Jenis Timbulan per Perusahaan – Site")
+
+needed_cols2 = {"jenis_timbulan", "Timbulan", "Man Power", "Tahun", "Site", "Perusahaan"}
+if df_timbulan_filtered.empty or not needed_cols2.issubset(df_timbulan_filtered.columns):
+    st.warning("Kolom belum lengkap untuk analisis Perusahaan–Site.")
+else:
+    import numpy as np
+
+    dfps = df_timbulan_filtered.copy()
+    dfps["Tahun"] = pd.to_numeric(dfps["Tahun"], errors="coerce").astype("Int64")
+    dfps["Timbulan"] = pd.to_numeric(dfps["Timbulan"], errors="coerce").fillna(0)
+    dfps["Man Power"] = pd.to_numeric(dfps["Man Power"], errors="coerce").fillna(0)
+    dfps["Perusahaan_Site"] = dfps["Perusahaan"].astype(str) + " - " + dfps["Site"].astype(str)
+
+    metric_mode_ps = st.radio(
+        "Metrik:",
+        ["Timbulan (kg/hari)", "Timbulan (kg/hari/orang)"],
+        horizontal=True,
+        key="ps_metric"
+    )
+
+    tahun_opsi_ps = sorted([int(x) for x in dfps["Tahun"].dropna().unique().tolist()])
+    tahun_ps = st.selectbox("Tahun:", ["All"] + tahun_opsi_ps, key="ps_year")
+
+    ps_list = sorted(dfps["Perusahaan_Site"].dropna().unique().tolist())
+    ps_pick = st.selectbox("Perusahaan–Site:", ["All"] + ps_list, key="ps_pick")
+
+    # -------- helper: agregasi per PS x Tahun x Jenis ----------
+    def build_ps_agg(dfin: pd.DataFrame) -> pd.DataFrame:
+        # manpower unik per Perusahaan-Site-Tahun (penting!)
+        mp_uniq = (
+            dfin[["Perusahaan_Site", "Site", "Perusahaan", "Tahun", "Man Power"]]
+            .drop_duplicates(subset=["Perusahaan_Site", "Tahun"], keep="last")
+            .groupby(["Perusahaan_Site", "Tahun"], as_index=False)["Man Power"].sum()
+            .rename(columns={"Man Power": "MP_PS"})
+        )
+
+        kgday = (
+            dfin.groupby(["Perusahaan_Site", "Tahun", "jenis_timbulan"], as_index=False)["Timbulan"]
+            .sum()
+            .rename(columns={"Timbulan": "KGDAY"})
+        )
+
+        out = kgday.merge(mp_uniq, on=["Perusahaan_Site", "Tahun"], how="left")
+        out["MP_PS"] = out["MP_PS"].fillna(0)
+        out["KGDAY_per_MP"] = np.where(out["MP_PS"] > 0, out["KGDAY"] / out["MP_PS"], 0)
+        return out
+
+    base = dfps.copy()
+    if tahun_ps != "All":
+        base = base[base["Tahun"] == int(tahun_ps)]
+    if ps_pick != "All":
+        base = base[base["Perusahaan_Site"] == ps_pick]
+
+    agg_ps = build_ps_agg(base)
+
+    # pilih metrik
+    if metric_mode_ps == "Timbulan (kg/hari)":
+        vcol = "KGDAY"
+        vlab = "Timbulan (kg/hari)"
+        tfmt = "%{z:,.2f}"
+        barfmt = "%{text:,.2f}"
+    else:
+        vcol = "KGDAY_per_MP"
+        vlab = "Timbulan (kg/hari/orang)"
+        tfmt = "%{z:,.4f}"
+        barfmt = "%{text:,.4f}"
+
+    # -----------------------------------------
+    # MODE 1: All perusahaan-site -> Heatmap
+    # -----------------------------------------
+    if ps_pick == "All":
+        # Karena dimensinya 3 (PS x Tahun x Jenis),
+        # agar grafik seperti contoh (rapih & kebaca), kita pilih 1 jenis timbulan dulu.
+        jenis_opsi = sorted(dfps["jenis_timbulan"].dropna().unique().tolist())
+        jenis_focus = st.selectbox(
+            "Pilih Jenis Timbulan (untuk mode All Perusahaan–Site):",
+            options=jenis_opsi,
+            index=0,
+            key="ps_all_jenis_focus"
+        )
+
+        tmp = agg_ps[agg_ps["jenis_timbulan"] == jenis_focus].copy()
+
+        # Kalau user pilih Tahun tertentu
+        if tahun_ps != "All":
+            yy = int(tahun_ps)
+            tmp = tmp[tmp["Tahun"] == yy].copy()
+
+            tmp = tmp.groupby("Perusahaan_Site", as_index=False)[vcol].sum()
+            tmp = tmp.sort_values(vcol, ascending=True)
+
+            fig = px.bar(
+                tmp,
+                y="Perusahaan_Site",
+                x=vcol,
+                orientation="h",
+                text=vcol,
+                labels={vcol: vlab, "Perusahaan_Site": "Perusahaan - Site"},
+                template="plotly_white"
+            )
+            fig.update_traces(texttemplate=barfmt, textposition="outside", cliponaxis=False)
+
+            mx = float(tmp[vcol].max()) if len(tmp) else 0
+            fig.update_xaxes(range=[0, mx * 1.25] if mx > 0 else None)
+
+            fig.update_layout(
+                title=f"{jenis_focus} — Perusahaan–Site (Tahun {yy})",
+                height=520,
+                margin=dict(t=60, b=40, l=170, r=80),
+                yaxis=dict(autorange="reversed")
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Kalau Tahun = All (bandingkan 2024 vs 2025) → seperti contoh kamu
+        else:
+            color_map_year = {2024: "#E74C3C", 2025: "#2ECC71"}  # merah, hijau
+
+            # Agregasi: total per PS per Tahun untuk jenis terpilih
+            tmp = (
+                tmp.groupby(["Perusahaan_Site", "Tahun"], as_index=False)[vcol]
+                .sum()
+            )
+
+            # Urut PS berdasarkan total (biar rapih)
+            order_ps = (
+                tmp.groupby("Perusahaan_Site")[vcol].sum()
+                .sort_values(ascending=True)
+                .index.tolist()
+            )
+
+            fig = px.bar(
+                tmp,
+                y="Perusahaan_Site",
+                x=vcol,
+                color="Tahun",
+                barmode="group",
+                orientation="h",
+                category_orders={"Perusahaan_Site": order_ps},
+                labels={vcol: vlab, "Perusahaan_Site": "Perusahaan - Site"},
+                template="plotly_white",
+                color_discrete_map=color_map_year
+            )
+
+            fig.update_traces(
+                text=tmp[vcol],
+                texttemplate=barfmt,
+                textposition="outside",
+                cliponaxis=False
+            )
+
+            mx = float(tmp[vcol].max()) if len(tmp) else 0
+            fig.update_xaxes(range=[0, mx * 1.25] if mx > 0 else None)
+
+            fig.update_layout(
+                title=f"{jenis_focus} — Perbandingan 2024 vs 2025 (All Perusahaan–Site)",
+                height=560,
+                margin=dict(t=60, b=40, l=170, r=80),
+                legend=dict(orientation="h", y=1.12, x=0),
+                yaxis=dict(autorange="reversed")
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+
+    # -----------------------------------------
+    # MODE 2: satu perusahaan-site -> Bar detail
+    # -----------------------------------------
+    else:
+        # jika tahun All -> grouped per tahun (2024 merah, 2025 hijau)
+        if tahun_ps == "All":
+            color_map_year = {2024: "red", 2025: "green"}
+            # urut jenis
+            order_jenis = (
+                agg_ps.groupby("jenis_timbulan")[vcol].sum()
+                .sort_values(ascending=False).index.tolist()
+            )
+
+            fig = px.bar(
+                agg_ps,
+                x="jenis_timbulan",
+                y=vcol,
+                color="Tahun",
+                barmode="group",
+                category_orders={"jenis_timbulan": order_jenis},
+                template="plotly_white",
+                color_discrete_map=color_map_year,
+                labels={vcol: vlab, "jenis_timbulan": "Jenis Timbulan"}
+            )
+            fig.update_traces(text=agg_ps[vcol], texttemplate=barfmt, textposition="outside", cliponaxis=False)
+            fig.update_layout(
+                title=f"{ps_pick} — Perbandingan 2024 vs 2025",
+                height=520, margin=dict(t=60, b=120),
+                legend=dict(orientation="h", y=1.12, x=0)
+            )
+            fig.update_xaxes(tickangle=-30)
+            st.plotly_chart(fig, use_container_width=True)
+
+        else:
+            tmp = agg_ps.copy()
+            tmp = tmp.sort_values(vcol, ascending=False)
+
+            fig = px.bar(
+                tmp,
+                x="jenis_timbulan",
+                y=vcol,
+                text=vcol,
+                color=vcol,
+                template="plotly_white",
+                labels={vcol: vlab, "jenis_timbulan": "Jenis Timbulan"}
+            )
+            fig.update_traces(texttemplate=barfmt, textposition="outside", cliponaxis=False)
+            fig.update_layout(
+                title=f"{ps_pick} — Tahun {tahun_ps}",
+                height=520, margin=dict(t=60, b=120)
+            )
+            fig.update_xaxes(tickangle=-30)
+            st.plotly_chart(fig, use_container_width=True)
+
+    with st.expander("🔍 Audit perhitungan (Perusahaan–Site x Tahun x Jenis)"):
+        st.dataframe(
+            agg_ps[["Perusahaan_Site", "Tahun", "jenis_timbulan", "KGDAY", "MP_PS", "KGDAY_per_MP"]],
+            hide_index=True,
+            use_container_width=True
+        )
+
 
 # ===========================
 # RASIO TIMBULAN vs MANPOWER
